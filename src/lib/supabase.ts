@@ -1,0 +1,62 @@
+import { createClient } from '@supabase/supabase-js'
+import { createBrowserClient } from '@supabase/ssr'
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+// Check if Supabase is configured
+const isSupabaseConfigured = supabaseUrl && supabaseAnonKey &&
+  supabaseUrl !== 'your_supabase_project_url' &&
+  supabaseAnonKey !== 'your_supabase_anon_key'
+
+// Client-side Supabase client
+export const supabase = isSupabaseConfigured
+  ? createBrowserClient(supabaseUrl!, supabaseAnonKey!)
+  : null
+
+// Server-side Supabase client (for API routes)
+export const createServerClient = () => {
+  if (!isSupabaseConfigured) {
+    throw new Error('Supabase is not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.')
+  }
+  return createClient(supabaseUrl!, supabaseAnonKey!)
+}
+
+// Database types
+export interface User {
+  id: string
+  email: string
+  display_name: string
+  avatar_url?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Game {
+  id: string
+  white_player_id: string
+  black_player_id?: string
+  game_state: string // FEN notation
+  moves: string[] // Array of moves in algebraic notation
+  status: 'waiting' | 'active' | 'completed' | 'abandoned'
+  winner?: 'white' | 'black' | 'draw'
+  created_at: string
+  updated_at: string
+}
+
+export interface GameMove {
+  id: string
+  game_id: string
+  player_id: string
+  move: string
+  fen_after: string
+  created_at: string
+}
+
+export interface ChatMessage {
+  id: string
+  game_id: string
+  user_id: string
+  message: string
+  created_at: string
+}
