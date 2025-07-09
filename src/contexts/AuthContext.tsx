@@ -28,7 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Get initial session
     const getInitialSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
+      const { data: { session } } = await supabase!.auth.getSession()
       if (session?.user) {
         setSupabaseUser(session.user)
         await fetchUserProfile(session.user.id)
@@ -39,8 +39,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     getInitialSession()
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+    const { data: { subscription } } = supabase!.auth.onAuthStateChange(
+      async (_event, session) => {
         if (session?.user) {
           setSupabaseUser(session.user)
           await fetchUserProfile(session.user.id)
@@ -66,13 +66,84 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .single()
 
       if (error) {
-        console.error('Error fetching user profile:', error)
+        console.error('Error fetching user profile:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+          userId: userId
+        })
+
+        // If user doesn't exist, try to create them
+        if (error.code === 'PGRST116') { // No rows returned
+          console.log('User not found in users table, attempting to create...')
+          await createUserProfile(userId)
+          return
+        }
         return
       }
 
       setUser(data)
     } catch (error) {
       console.error('Error fetching user profile:', error)
+    }
+  }
+
+  const createUserProfile = async (userId: string) => {
+    if (!supabase || !supabaseUser) return
+
+    try {
+      // Get user info from Supabase auth
+      const { data: authUser, error: authError } = await supabase.auth.getUser()
+
+      if (authError) {
+        console.error('Error getting auth user:', authError)
+        return
+      }
+
+      const user = authUser.user
+      if (!user) return
+
+      // Extract display name and avatar from user metadata
+      const displayName = user.user_metadata?.display_name ||
+                         user.user_metadata?.name ||
+                         user.user_metadata?.full_name ||
+                         user.user_metadata?.given_name ||
+                         user.email?.split('@')[0] ||
+                         'Anonymous'
+
+      const avatarUrl = user.user_metadata?.avatar_url ||
+                       user.user_metadata?.picture
+
+      // Create user profile
+      const { data, error } = await supabase
+        .from('users')
+        .insert({
+          id: userId,
+          email: user.email!,
+          display_name: displayName,
+          avatar_url: avatarUrl
+        })
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error creating user profile:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+          userId: userId,
+          email: user.email,
+          displayName: displayName
+        })
+        return
+      }
+
+      console.log('User profile created successfully:', data)
+      setUser(data)
+    } catch (error) {
+      console.error('Error creating user profile:', error)
     }
   }
 

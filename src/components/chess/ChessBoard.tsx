@@ -14,12 +14,11 @@ interface ChessBoardProps {
   initialFen?: string
 }
 
-export default function ChessBoard({ 
-  gameId, 
-  playerColor = 'white', 
+export default function ChessBoard({
+  playerColor = 'white',
   isSpectator = false,
   onMove,
-  initialFen 
+  initialFen
 }: ChessBoardProps) {
   const {
     gameState,
@@ -32,8 +31,7 @@ export default function ChessBoard({
     isCheckmate,
     isDraw,
     isGameOver,
-    currentFen,
-    pgn
+    currentFen
   } = useChessGame(initialFen)
 
   // Custom square styles for highlighting

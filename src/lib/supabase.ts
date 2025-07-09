@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js'
 import { createBrowserClient } from '@supabase/ssr'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -13,14 +12,6 @@ const isSupabaseConfigured = supabaseUrl && supabaseAnonKey &&
 export const supabase = isSupabaseConfigured
   ? createBrowserClient(supabaseUrl!, supabaseAnonKey!)
   : null
-
-// Server-side Supabase client (for API routes)
-export const createServerClient = () => {
-  if (!isSupabaseConfigured) {
-    throw new Error('Supabase is not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.')
-  }
-  return createClient(supabaseUrl!, supabaseAnonKey!)
-}
 
 // Database types
 export interface User {

@@ -46,8 +46,9 @@ export default function Home() {
                 <p>
                   {error === 'server_error' && 'Database error saving new user. Please try again.'}
                   {error === 'auth_error' && 'Authentication failed. Please try again.'}
+                  {error === 'pkce_error' && 'Authentication configuration error. Please contact support.'}
                   {error === 'unexpected_error' && 'An unexpected error occurred. Please try again.'}
-                  {!['server_error', 'auth_error', 'unexpected_error'].includes(error) && `Error: ${error}`}
+                  {!['server_error', 'auth_error', 'pkce_error', 'unexpected_error'].includes(error) && `Error: ${error}`}
                 </p>
                 {errorDescription && (
                   <p className="mt-1 text-xs text-red-600">
