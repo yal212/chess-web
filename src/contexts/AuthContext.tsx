@@ -10,6 +10,7 @@ interface AuthContextType {
   loading: boolean
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
+  updateUserProfile: (updates: Partial<Pick<User, 'display_name' | 'avatar_url'>>) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -31,7 +32,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data: { session } } = await supabase!.auth.getSession()
       if (session?.user) {
         setSupabaseUser(session.user)
-        await fetchUserProfile(session.user.id)
+        try {
+          await fetchUserProfile(session.user.id)
+        } catch (error) {
+          console.error('Failed to fetch initial user profile, using fallback:', error)
+          createFallbackUser(session.user)
+        }
       }
       setLoading(false)
     }
@@ -40,10 +46,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Listen for auth changes
     const { data: { subscription } } = supabase!.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
+        console.log('Auth state change:', event, session?.user?.email)
+
         if (session?.user) {
           setSupabaseUser(session.user)
-          await fetchUserProfile(session.user.id)
+
+          // Try to fetch user profile, but don't block on it
+          try {
+            await fetchUserProfile(session.user.id)
+          } catch (error) {
+            console.error('Failed to fetch user profile, using fallback:', error)
+            // Fallback: create user object from auth data
+            createFallbackUser(session.user)
+          }
         } else {
           setSupabaseUser(null)
           setUser(null)
@@ -55,15 +71,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe()
   }, [])
 
+  // Monitor for cases where we have supabaseUser but no user profile
+  useEffect(() => {
+    if (supabaseUser && !user && !loading) {
+      console.log('Detected auth user without profile, creating fallback user')
+      createFallbackUser(supabaseUser)
+    }
+  }, [supabaseUser, user, loading])
+
+  const createFallbackUser = (authUser: SupabaseUser) => {
+    console.log('Creating fallback user from auth data:', authUser.email)
+
+    const displayName = authUser.user_metadata?.display_name ||
+                       authUser.user_metadata?.name ||
+                       authUser.user_metadata?.full_name ||
+                       authUser.user_metadata?.given_name ||
+                       authUser.email?.split('@')[0] ||
+                       'Anonymous'
+
+    const fallbackUser: User = {
+      id: authUser.id,
+      email: authUser.email!,
+      display_name: displayName,
+      avatar_url: authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
+      created_at: authUser.created_at,
+      updated_at: new Date().toISOString()
+    }
+
+    setUser(fallbackUser)
+    console.log('Fallback user created:', fallbackUser)
+  }
+
   const fetchUserProfile = async (userId: string) => {
     if (!supabase) return
 
     try {
+      // First, let's try to get the current session to ensure we have proper auth
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) {
+        console.log('No active session, skipping user profile fetch')
+        return
+      }
+
       const { data, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
-        .single()
+        .maybeSingle() // Use maybeSingle instead of single to avoid errors when no rows
 
       if (error) {
         console.error('Error fetching user profile:', {
@@ -74,18 +128,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           userId: userId
         })
 
-        // If user doesn't exist, try to create them
-        if (error.code === 'PGRST116') { // No rows returned
+        // Handle specific error cases
+        if (error.code === 'PGRST116' || error.message.includes('406') || !data) {
           console.log('User not found in users table, attempting to create...')
           await createUserProfile(userId)
           return
         }
+
+        // For other errors, we'll continue without setting user data
+        // but won't block the authentication flow
         return
       }
 
-      setUser(data)
+      if (data) {
+        setUser(data)
+      } else {
+        // No user found, try to create one
+        console.log('No user data returned, attempting to create user profile...')
+        await createUserProfile(userId)
+      }
     } catch (error) {
       console.error('Error fetching user profile:', error)
+      // Don't block auth flow, try to create user profile as fallback
+      await createUserProfile(userId)
     }
   }
 
@@ -115,14 +180,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const avatarUrl = user.user_metadata?.avatar_url ||
                        user.user_metadata?.picture
 
-      // Create user profile
+      console.log('Attempting to create user profile:', {
+        userId,
+        email: user.email,
+        displayName,
+        avatarUrl
+      })
+
+      // Create user profile with upsert to handle conflicts
       const { data, error } = await supabase
         .from('users')
-        .insert({
+        .upsert({
           id: userId,
           email: user.email!,
           display_name: displayName,
-          avatar_url: avatarUrl
+          avatar_url: avatarUrl,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'id'
         })
         .select()
         .single()
@@ -137,6 +212,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: user.email,
           displayName: displayName
         })
+
+        // If we still can't create the user, set a minimal user object
+        // so the app doesn't get stuck in a loop
+        if (error.message.includes('406') || error.code === 'PGRST301') {
+          console.log('Database access issue, using auth user data as fallback')
+          setUser({
+            id: userId,
+            email: user.email!,
+            display_name: displayName,
+            avatar_url: avatarUrl,
+            created_at: user.created_at,
+            updated_at: new Date().toISOString()
+          })
+        }
         return
       }
 
@@ -144,6 +233,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(data)
     } catch (error) {
       console.error('Error creating user profile:', error)
+
+      // Fallback: use the auth user data to prevent infinite loops
+      if (supabaseUser) {
+        const displayName = supabaseUser.user_metadata?.display_name ||
+                           supabaseUser.user_metadata?.name ||
+                           supabaseUser.user_metadata?.full_name ||
+                           supabaseUser.email?.split('@')[0] ||
+                           'Anonymous'
+
+        setUser({
+          id: userId,
+          email: supabaseUser.email!,
+          display_name: displayName,
+          avatar_url: supabaseUser.user_metadata?.avatar_url || supabaseUser.user_metadata?.picture,
+          created_at: supabaseUser.created_at,
+          updated_at: new Date().toISOString()
+        })
+      }
     }
   }
 
@@ -182,12 +289,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const updateUserProfile = async (updates: Partial<Pick<User, 'display_name' | 'avatar_url'>>) => {
+    if (!supabase || !user) {
+      throw new Error('User not authenticated or Supabase not configured')
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .update({
+          ...updates,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id)
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error updating user profile:', error)
+        throw error
+      }
+
+      // Update the local user state
+      setUser(data)
+    } catch (error) {
+      console.error('Error updating user profile:', error)
+      throw error
+    }
+  }
+
   const value = {
     user,
     supabaseUser,
     loading,
     signInWithGoogle,
-    signOut
+    signOut,
+    updateUserProfile
   }
 
   return (

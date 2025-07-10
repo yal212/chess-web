@@ -2,12 +2,40 @@
 
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function AuthDebug() {
   const { user, supabaseUser, loading } = useAuth()
   const [debugInfo, setDebugInfo] = useState<any>(null)
   const [isDebugging, setIsDebugging] = useState(false)
+  const [authLogs, setAuthLogs] = useState<string[]>([])
+
+  // Capture console logs related to authentication
+  useEffect(() => {
+    const originalConsoleError = console.error
+    const originalConsoleLog = console.log
+
+    console.error = (...args) => {
+      const message = args.join(' ')
+      if (message.includes('auth') || message.includes('user') || message.includes('profile') || message.includes('Error')) {
+        setAuthLogs(prev => [...prev.slice(-9), `ERROR: ${message}`])
+      }
+      originalConsoleError(...args)
+    }
+
+    console.log = (...args) => {
+      const message = args.join(' ')
+      if (message.includes('auth') || message.includes('user') || message.includes('profile') || message.includes('User')) {
+        setAuthLogs(prev => [...prev.slice(-9), `LOG: ${message}`])
+      }
+      originalConsoleLog(...args)
+    }
+
+    return () => {
+      console.error = originalConsoleError
+      console.log = originalConsoleLog
+    }
+  }, [])
 
   const runDebugCheck = async () => {
     if (!supabase) {
@@ -120,7 +148,7 @@ export default function AuthDebug() {
   return (
     <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
       <h3 className="font-bold text-gray-800 mb-4">Authentication Debug Info</h3>
-      
+
       <div className="space-y-4">
         <div>
           <h4 className="font-semibold">Auth Context State:</h4>
@@ -130,18 +158,49 @@ export default function AuthDebug() {
               hasUser: !!user,
               hasSupabaseUser: !!supabaseUser,
               userEmail: user?.email || supabaseUser?.email,
-              userId: user?.id || supabaseUser?.id
+              userId: user?.id || supabaseUser?.id,
+              userDisplayName: user?.display_name,
+              userAvatarUrl: user?.avatar_url,
+              supabaseUserMetadata: supabaseUser?.user_metadata
             }, null, 2)}
           </pre>
         </div>
 
-        <button
-          onClick={runDebugCheck}
-          disabled={isDebugging}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
-        >
-          {isDebugging ? 'Running Debug Check...' : 'Run Debug Check'}
-        </button>
+        {authLogs.length > 0 && (
+          <div>
+            <h4 className="font-semibold">Recent Auth Logs:</h4>
+            <div className="text-sm bg-white p-2 rounded border max-h-32 overflow-auto">
+              {authLogs.map((log, index) => (
+                <div key={index} className={`mb-1 ${log.startsWith('ERROR:') ? 'text-red-600' : 'text-gray-600'}`}>
+                  {log}
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setAuthLogs([])}
+              className="mt-2 px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+            >
+              Clear Logs
+            </button>
+          </div>
+        )}
+
+        <div className="flex space-x-2">
+          <button
+            onClick={runDebugCheck}
+            disabled={isDebugging}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+          >
+            {isDebugging ? 'Running Debug Check...' : 'Run Debug Check'}
+          </button>
+
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+          >
+            Refresh Page
+          </button>
+        </div>
 
         {debugInfo && (
           <div>

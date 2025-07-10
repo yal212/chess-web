@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import LoginButton from '@/components/auth/LoginButton'
+import AccountButton from '@/components/auth/AccountButton'
 import { Crown, Home, User, Gamepad2 } from 'lucide-react'
 
 export default function Navigation() {
@@ -56,6 +57,7 @@ export default function Navigation() {
             )}
 
             <LoginButton />
+            <AccountButton />
           </div>
         </div>
       </div>

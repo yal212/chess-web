@@ -1,57 +1,72 @@
--- Fix RLS policies to allow user profile creation
--- Run this in your Supabase SQL editor
+-- Comprehensive fix for RLS policies to allow chess moves
+-- Run this in your Supabase SQL Editor
 
--- 1. Check current policies
-SELECT 
-  'Current RLS Policies' as info,
-  schemaname,
-  tablename,
-  policyname,
-  permissive,
-  roles,
-  cmd,
-  qual,
-  with_check
-FROM pg_policies 
-WHERE tablename = 'users'
-ORDER BY tablename, policyname;
+-- First, let's see what we're working with
+SELECT 'Current games table policies:' as info;
+SELECT policyname, cmd, qual FROM pg_policies WHERE tablename = 'games' AND schemaname = 'public';
 
--- 2. Drop existing policies to recreate them
-DROP POLICY IF EXISTS "Users can view all profiles" ON users;
-DROP POLICY IF EXISTS "Users can update own profile" ON users;
+SELECT 'Current game_moves table policies:' as info;
+SELECT policyname, cmd, qual FROM pg_policies WHERE tablename = 'game_moves' AND schemaname = 'public';
 
--- 3. Create new policies that allow user creation
--- Allow all authenticated users to view profiles
-CREATE POLICY "Users can view all profiles" ON users 
-  FOR SELECT 
-  USING (true);
+-- Drop existing problematic policies
+DROP POLICY IF EXISTS "Players can update their games" ON games;
+DROP POLICY IF EXISTS "Players can insert moves in their games" ON game_moves;
+DROP POLICY IF EXISTS "Users can view moves from their games" ON game_moves;
 
--- Allow users to insert their own profile
-CREATE POLICY "Users can insert own profile" ON users 
-  FOR INSERT 
-  WITH CHECK (auth.uid() = id);
+-- Create comprehensive games UPDATE policy
+CREATE POLICY "Players can update their games" ON games
+FOR UPDATE USING (
+  -- Players can update games they're part of
+  auth.uid() = white_player_id OR
+  auth.uid() = black_player_id OR
+  -- Allow users to join waiting games
+  (status = 'waiting' AND black_player_id IS NULL AND auth.uid() != white_player_id)
+)
+WITH CHECK (
+  -- Same conditions for updates
+  auth.uid() = white_player_id OR
+  auth.uid() = black_player_id OR
+  (status = 'waiting' AND black_player_id IS NULL AND auth.uid() != white_player_id)
+);
 
--- Allow users to update their own profile
-CREATE POLICY "Users can update own profile" ON users 
-  FOR UPDATE 
-  USING (auth.uid() = id)
-  WITH CHECK (auth.uid() = id);
+-- Create permissive game_moves INSERT policy
+CREATE POLICY "Players can insert moves in their games" ON game_moves
+FOR INSERT WITH CHECK (
+  -- Must be authenticated
+  auth.uid() IS NOT NULL AND
+  -- Must be inserting own move
+  auth.uid() = player_id AND
+  -- Must be part of the game (either as white or black player)
+  EXISTS (
+    SELECT 1 FROM games
+    WHERE games.id = game_moves.game_id
+    AND (
+      games.white_player_id = auth.uid() OR
+      games.black_player_id = auth.uid() OR
+      -- Allow moves in waiting games (single player testing)
+      (games.status = 'waiting' AND games.white_player_id = auth.uid())
+    )
+  )
+);
 
--- 4. Verify the new policies
-SELECT 
-  'Updated RLS Policies' as info,
-  schemaname,
-  tablename,
-  policyname,
-  permissive,
-  roles,
-  cmd,
-  qual,
-  with_check
-FROM pg_policies 
-WHERE tablename = 'users'
-ORDER BY tablename, policyname;
+-- Create game_moves SELECT policy
+CREATE POLICY "Users can view moves from their games" ON game_moves
+FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM games
+    WHERE games.id = game_moves.game_id
+    AND (
+      games.white_player_id = auth.uid() OR
+      games.black_player_id = auth.uid()
+    )
+  )
+);
 
--- 5. Test the policies by attempting to create a user profile
--- This should work now for authenticated users
-SELECT 'RLS Policy Test Complete' as result;
+-- Verify new policies
+SELECT 'Updated games table policies:' as info;
+SELECT policyname, cmd, qual FROM pg_policies WHERE tablename = 'games' AND schemaname = 'public';
+
+SELECT 'Updated game_moves table policies:' as info;
+SELECT policyname, cmd, qual FROM pg_policies WHERE tablename = 'game_moves' AND schemaname = 'public';
+
+SELECT 'RLS Policy Fix Applied Successfully!' as result;

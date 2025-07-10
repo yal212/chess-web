@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
@@ -31,15 +31,26 @@ export default function GamePage() {
   const params = useParams()
   const gameId = params.id as string
   const { user } = useAuth()
-  
+
   const [game, setGame] = useState<GameData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Track when the current user is making a move to prevent sync conflicts
+  const [isUserMakingMove, setIsUserMakingMove] = useState(false)
+  const userMoveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     if (gameId && user) {
       fetchGame()
       subscribeToGameUpdates()
+    }
+
+    // Cleanup timeout on unmount
+    return () => {
+      if (userMoveTimeoutRef.current) {
+        clearTimeout(userMoveTimeoutRef.current)
+      }
     }
   }, [gameId, user])
 
@@ -84,8 +95,38 @@ export default function GamePage() {
           filter: `id=eq.${gameId}`
         },
         (payload) => {
-          console.log('Game update:', payload)
-          fetchGame() // Refetch game data when it changes
+          console.log('🔔 Real-time update received:', payload)
+
+          // If the current user is making a move, delay the refetch to avoid conflicts
+          if (isUserMakingMove) {
+            console.log('🔄 User is making move, delaying refetch...')
+            setTimeout(() => {
+              console.log('🔄 Delayed refetch after user move')
+              fetchGame()
+            }, 1000) // Wait 1 second for local state to settle
+            return
+          }
+
+          // Only refetch if this update wasn't made by the current user
+          // This prevents unnecessary refetches when the user makes their own move
+          if (payload.new && payload.old) {
+            const newMovesLength = payload.new.moves?.length || 0
+            const oldMovesLength = payload.old.moves?.length || 0
+
+            // If moves were added, this is a move update
+            if (newMovesLength > oldMovesLength) {
+              console.log('🔄 Move detected, refetching game state...')
+              fetchGame()
+            } else {
+              // Other updates (status changes, player joins, etc.)
+              console.log('🔄 Non-move update, refetching...')
+              fetchGame()
+            }
+          } else {
+            // New game or other changes
+            console.log('🔄 New game or other changes, refetching...')
+            fetchGame()
+          }
         }
       )
       .subscribe()
@@ -96,34 +137,123 @@ export default function GamePage() {
   }
 
   const handleMove = async (move: any) => {
-    if (!game || !user) return
+    console.log('🎯 handleMove called with:', move)
+    console.log('🔍 Move object type:', typeof move)
+    console.log('🔍 Move object keys:', move ? Object.keys(move) : 'move is null/undefined')
+
+    if (!move) {
+      console.error('❌ Move object is null or undefined')
+      return
+    }
+
+    if (!game || !user) {
+      console.log('❌ Missing game or user:', { game: !!game, user: !!user })
+      return
+    }
+
+    // Set flag to indicate user is making a move
+    setIsUserMakingMove(true)
+
+    // Clear any existing timeout
+    if (userMoveTimeoutRef.current) {
+      clearTimeout(userMoveTimeoutRef.current)
+    }
+
+    console.log('🎮 Game state:', {
+      status: game.status,
+      white_player: game.white_player_id,
+      black_player: game.black_player_id,
+      moves_count: game.moves.length,
+      current_turn: game.game_state.split(' ')[1] === 'w' ? 'White' : 'Black'
+    })
+
+    console.log('👤 User info:', {
+      id: user.id,
+      is_white: game.white_player_id === user.id,
+      is_black: game.black_player_id === user.id
+    })
+
+    // Validate it's the player's turn
+    if (!isPlayerTurn()) {
+      console.log('❌ Not your turn!')
+      alert('It\'s not your turn!')
+      return
+    }
+
+    // Validate the game is active and has both players
+    if (game.status !== 'active' || !game.black_player_id) {
+      console.log('❌ Game is not active or missing players')
+      alert('Game is not active or waiting for another player')
+      return
+    }
+
+    // Validate the user is actually a player in this game
+    if (game.white_player_id !== user.id && game.black_player_id !== user.id) {
+      console.log('❌ User is not a player in this game')
+      alert('You are not a player in this game')
+      return
+    }
 
     try {
+      console.log('🔄 Attempting to update game...')
+
+      // Extract move data safely - the move object should have the FEN after the move
+      const moveSan = move.san || move.move || `${move.from}-${move.to}`
+      const moveAfter = move.after || move.fen
+
+      if (!moveAfter) {
+        console.error('❌ No FEN position after move')
+        alert('Invalid move: no position data')
+        return
+      }
+
+      console.log('📝 Move data:', { moveSan, moveAfter })
+
       // Update game state in database
-      const newMoves = [...game.moves, move.san]
+      const newMoves = [...game.moves, moveSan]
       const { error } = await supabase
         .from('games')
         .update({
-          game_state: move.after, // FEN after the move
-          moves: newMoves
+          game_state: moveAfter, // FEN after the move
+          moves: newMoves,
+          updated_at: new Date().toISOString()
         })
         .eq('id', gameId)
 
-      if (error) throw error
+      if (error) {
+        console.error('❌ Game update error:', error)
+        throw error
+      }
+
+      console.log('✅ Game updated successfully')
 
       // Also record the move in game_moves table
-      await supabase
+      console.log('🔄 Attempting to record move...')
+      const { error: moveError } = await supabase
         .from('game_moves')
         .insert({
           game_id: gameId,
           player_id: user.id,
-          move: move.san,
-          fen_after: move.after,
+          move: moveSan,
+          fen_after: moveAfter,
           move_number: newMoves.length
         })
 
+      if (moveError) {
+        console.error('❌ Move recording error:', moveError)
+      } else {
+        console.log('✅ Move recorded successfully')
+      }
+
     } catch (error) {
-      console.error('Error updating game:', error)
+      console.error('❌ Error in handleMove:', error)
+      alert(`Failed to make move: ${error.message}`)
+    } finally {
+      // Clear the user making move flag after a delay to allow for sync
+      userMoveTimeoutRef.current = setTimeout(() => {
+        console.log('🔄 Clearing user making move flag')
+        setIsUserMakingMove(false)
+      }, 2000) // Wait 2 seconds for the move to be fully processed
     }
   }
 
@@ -280,9 +410,12 @@ export default function GamePage() {
             <ChessBoard
               gameId={gameId}
               playerColor={getPlayerColor()}
-              isSpectator={game.status !== 'active' || !game.black_player_id}
+              isSpectator={game.status === 'completed' || game.status === 'abandoned'}
               onMove={handleMove}
               initialFen={game.game_state}
+              currentFen={game.game_state}
+              moves={game.moves}
+              isPlayerTurn={game.status === 'active' ? isPlayerTurn() : false}
             />
           </div>
         </div>

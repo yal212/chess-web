@@ -37,40 +37,7 @@ export default function LoginButton() {
   }
 
   if (user) {
-    return (
-      <div className="flex items-center space-x-4">
-        <div className="flex items-center space-x-2">
-          {user.avatar_url ? (
-            <img
-              src={user.avatar_url}
-              alt={user.display_name}
-              className="w-8 h-8 rounded-full"
-            />
-          ) : (
-            <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
-              <User className="w-4 h-4 text-gray-600" />
-            </div>
-          )}
-          <span className="text-sm font-medium text-gray-700">
-            {user.display_name}
-          </span>
-        </div>
-        <button
-          onClick={handleSignOut}
-          disabled={isLoading}
-          className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isLoading ? (
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-          ) : (
-            <>
-              <LogOut className="w-4 h-4 mr-1" />
-              Sign Out
-            </>
-          )}
-        </button>
-      </div>
-    )
+    return null // Account button will be handled by AccountButton component
   }
 
   return (

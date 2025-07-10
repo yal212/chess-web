@@ -11,19 +11,28 @@ export interface ChessGameState {
   gameStatus: 'waiting' | 'active' | 'completed' | 'abandoned'
   winner?: 'white' | 'black' | 'draw'
   moveHistory: string[]
+  resignedBy?: 'white' | 'black'
 }
 
 export function useChessGame(initialFen?: string) {
-  const [gameState, setGameState] = useState<ChessGameState>(() => ({
-    game: new Chess(initialFen),
-    playerColor: 'white',
-    isPlayerTurn: true,
-    gameStatus: 'active', // Start as active for demo mode
-    moveHistory: []
-  }))
+  console.log('🎯 useChessGame: Hook called', { initialFen })
+
+  const [gameState, setGameState] = useState<ChessGameState>(() => {
+    console.log('🎯 useChessGame: Initial state creation', { initialFen })
+    return {
+      game: new Chess(initialFen),
+      playerColor: 'white',
+      isPlayerTurn: true,
+      gameStatus: 'active', // Start as active for demo mode
+      moveHistory: []
+    }
+  })
 
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null)
   const [possibleMoves, setPossibleMoves] = useState<Square[]>([])
+
+  // Track recent local moves to prevent sync conflicts
+  const [recentLocalMoves, setRecentLocalMoves] = useState<Set<string>>(new Set())
 
   // Get possible moves for a square
   const getPossibleMoves = useCallback((square: Square): Square[] => {
@@ -33,8 +42,7 @@ export function useChessGame(initialFen?: string) {
 
   // Make a move
   const makeMove = useCallback((from: Square, to: Square, promotion?: string) => {
-    // For demo mode, always allow moves (skip turn check)
-    // In multiplayer mode, this would check gameState.isPlayerTurn
+    console.log('🎯 makeMove: Called with', { from, to, currentFen: gameState.game.fen() })
 
     try {
       // Create a copy of the game to test the move
@@ -46,19 +54,62 @@ export function useChessGame(initialFen?: string) {
       })
 
       if (move) {
-        // Update state with the new game state
-        setGameState(prev => ({
-          ...prev,
-          game: gameCopy, // Use the updated game copy
-          moveHistory: [...prev.moveHistory, move.san],
-          isPlayerTurn: true // Keep as true for demo mode to allow continuous play
-        }))
+        const newFen = gameCopy.fen()
 
+        console.log('🎯 makeMove: Local move made', { from, to, newFen, san: move.san })
+
+        // Track this move as a recent local move
+        setRecentLocalMoves(prev => {
+          const newSet = new Set(prev)
+          newSet.add(newFen)
+          console.log('🎯 makeMove: Added to recent local moves', { newFen, totalTracked: newSet.size })
+          // Keep only the last 5 moves to prevent memory leaks
+          if (newSet.size > 5) {
+            const firstItem = newSet.values().next().value
+            if (firstItem) {
+              newSet.delete(firstItem)
+            }
+          }
+          return newSet
+        })
+
+        // Clear the recent move after a delay to allow for sync
+        setTimeout(() => {
+          setRecentLocalMoves(prev => {
+            const newSet = new Set(prev)
+            newSet.delete(newFen)
+            console.log('🎯 makeMove: Cleared from recent local moves after timeout', { newFen })
+            return newSet
+          })
+        }, 3000) // Increased to 3 seconds to be safer
+
+        // Update state with the new game state immediately
+        console.log('🔄 makeMove: Updating game state', {
+          oldFen: gameState.game.fen(),
+          newFen: newFen,
+          move: move.san
+        })
+
+        setGameState(prev => {
+          console.log('🔄 makeMove: setState callback', {
+            prevFen: prev.game.fen(),
+            newFen: newFen
+          })
+          return {
+            ...prev,
+            game: gameCopy, // Use the updated game copy
+            moveHistory: [...prev.moveHistory, move.san]
+          }
+        })
+
+        console.log('✅ makeMove: State update completed')
         return { success: true, move }
       } else {
+        console.log('❌ makeMove: Invalid move')
         return { success: false, error: 'Invalid move' }
       }
     } catch (error) {
+      console.log('❌ makeMove: Exception', error)
       return { success: false, error: 'Invalid move' }
     }
   }, [gameState.game])
@@ -68,7 +119,6 @@ export function useChessGame(initialFen?: string) {
     // If no square is selected, select this square if it has a piece
     if (!selectedSquare) {
       const piece = gameState.game.get(square)
-      // For demo mode, allow selecting any piece (both colors)
       if (piece) {
         setSelectedSquare(square)
         setPossibleMoves(getPossibleMoves(square))
@@ -95,8 +145,13 @@ export function useChessGame(initialFen?: string) {
 
   // Handle piece drop (drag and drop)
   const onPieceDrop = useCallback((sourceSquare: Square, targetSquare: Square) => {
+    console.log('🎯 onPieceDrop: Starting move', { sourceSquare, targetSquare })
+
     const result = makeMove(sourceSquare, targetSquare)
-    return result?.success || false
+    const success = result?.success || false
+
+    console.log('🎯 onPieceDrop: Move result', { success, result })
+    return success
   }, [makeMove])
 
   // Reset game
@@ -107,20 +162,73 @@ export function useChessGame(initialFen?: string) {
       moveHistory: [],
       gameStatus: 'active', // Set to active for demo mode
       winner: undefined,
+      resignedBy: undefined,
       isPlayerTurn: true
     }))
     setSelectedSquare(null)
     setPossibleMoves([])
   }, [])
 
-  // Update game from external state (for multiplayer)
-  const updateGameState = useCallback((newState: Partial<ChessGameState>) => {
+  // Resign game
+  const resignGame = useCallback(() => {
+    const currentPlayer = gameState.game.turn() === 'w' ? 'white' : 'black'
+    const winner = currentPlayer === 'white' ? 'black' : 'white'
+
     setGameState(prev => ({
       ...prev,
-      ...newState,
-      game: newState.game ? new Chess(newState.game.fen()) : prev.game
+      gameStatus: 'completed',
+      winner,
+      resignedBy: currentPlayer,
+      isPlayerTurn: false
     }))
+
+    // Clear any selections
+    setSelectedSquare(null)
+    setPossibleMoves([])
+  }, [gameState.game])
+
+  // Normalize FEN by removing move counters for comparison
+  const normalizeFen = useCallback((fen: string) => {
+    // FEN format: "pieces activeColor castling enPassant halfmove fullmove"
+    // For comparison, we only care about the first 4 parts
+    const parts = fen.split(' ')
+    return parts.slice(0, 4).join(' ')
   }, [])
+
+  // Check if a FEN position is a recent local move
+  const isRecentLocalMove = useCallback((fen: string) => {
+    const normalizedFen = normalizeFen(fen)
+    const isRecent = Array.from(recentLocalMoves).some(trackedFen =>
+      normalizeFen(trackedFen) === normalizedFen
+    )
+    console.log('🎯 isRecentLocalMove: Checking FEN', {
+      fen,
+      normalizedFen,
+      isRecent,
+      trackedMoves: Array.from(recentLocalMoves).map(f => normalizeFen(f))
+    })
+    return isRecent
+  }, [recentLocalMoves, normalizeFen])
+
+  // Update game from external state (for multiplayer)
+  const updateGameState = useCallback((newState: Partial<ChessGameState>) => {
+    console.log('🔄 updateGameState called', { newState, currentFen: gameState.game.fen() })
+
+    setGameState(prev => {
+      const updatedState = {
+        ...prev,
+        ...newState
+      }
+
+      // If a new game instance is provided, use it directly
+      if (newState.game) {
+        updatedState.game = newState.game
+        console.log('🔄 updateGameState: New game instance', { newFen: newState.game.fen() })
+      }
+
+      return updatedState
+    })
+  }, [gameState.game])
 
   // Check game status
   useEffect(() => {
@@ -146,6 +254,13 @@ export function useChessGame(initialFen?: string) {
     }
   }, [gameState.game, gameState.gameStatus, gameState.winner])
 
+  const currentFen = gameState.game.fen()
+
+  // Debug FEN changes
+  useEffect(() => {
+    console.log('🎯 useChessGame: FEN changed', { currentFen })
+  }, [currentFen])
+
   return {
     gameState,
     selectedSquare,
@@ -154,12 +269,14 @@ export function useChessGame(initialFen?: string) {
     onPieceDrop,
     makeMove,
     resetGame,
+    resignGame,
     updateGameState,
+    isRecentLocalMove,
     isCheck: gameState.game.isCheck(),
     isCheckmate: gameState.game.isCheckmate(),
     isDraw: gameState.game.isDraw(),
-    isGameOver: gameState.game.isGameOver(),
-    currentFen: gameState.game.fen(),
+    isGameOver: gameState.game.isGameOver() || gameState.gameStatus === 'completed',
+    currentFen,
     pgn: gameState.game.pgn()
   }
 }

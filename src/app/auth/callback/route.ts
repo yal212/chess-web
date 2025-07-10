@@ -37,12 +37,33 @@ export async function GET(request: NextRequest) {
         console.log('User authenticated successfully:', {
           id: data.user.id,
           email: data.user.email,
-          metadata: data.user.user_metadata
+          metadata: data.user.user_metadata,
+          identities: data.user.identities?.map(i => ({ provider: i.provider, id: i.id }))
         })
+
+        // Check if this is a different account than previously signed in
+        const previousUserId = request.cookies.get('previous_user_id')?.value
+        if (previousUserId && previousUserId !== data.user.id) {
+          console.log('Different user account detected:', {
+            previousUserId,
+            currentUserId: data.user.id,
+            currentEmail: data.user.email
+          })
+        }
       }
 
       // Create a response that will set the auth cookies
       const response = NextResponse.redirect(`${requestUrl.origin}/`)
+
+      // Set a cookie to track the current user for detecting account switches
+      if (data.user) {
+        response.cookies.set('previous_user_id', data.user.id, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: 60 * 60 * 24 * 30 // 30 days
+        })
+      }
 
       return response
 

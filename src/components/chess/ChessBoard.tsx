@@ -1,10 +1,10 @@
 'use client'
 
 import { Chessboard } from 'react-chessboard'
-import { Square } from 'chess.js'
+import { Square, Chess } from 'chess.js'
 import { useChessGame } from '@/hooks/useChessGame'
 import { Crown, RotateCcw, Flag } from 'lucide-react'
-import { useMemo } from 'react'
+import { useMemo, useEffect } from 'react'
 
 interface ChessBoardProps {
   gameId?: string
@@ -12,13 +12,20 @@ interface ChessBoardProps {
   isSpectator?: boolean
   onMove?: (move: any) => void
   initialFen?: string
+  currentFen?: string // Current FEN from database
+  moves?: string[] // Move history from database
+  isPlayerTurn?: boolean // Whether it's the current player's turn
 }
 
 export default function ChessBoard({
+  gameId,
   playerColor = 'white',
   isSpectator = false,
   onMove,
-  initialFen
+  initialFen,
+  currentFen: externalFen,
+  moves: externalMoves,
+  isPlayerTurn = true
 }: ChessBoardProps) {
   const {
     gameState,
@@ -27,12 +34,70 @@ export default function ChessBoard({
     onSquareClick,
     onPieceDrop,
     resetGame,
+    resignGame,
+    updateGameState,
+    isRecentLocalMove,
     isCheck,
     isCheckmate,
     isDraw,
     isGameOver,
     currentFen
   } = useChessGame(initialFen)
+
+  // Debug board configuration
+  console.log('🎮 ChessBoard config:', {
+    playerColor,
+    isSpectator,
+    isPlayerTurn,
+    currentFen: currentFen.split(' ')[0] + '...',
+    gameStatus: gameState.gameStatus
+  })
+
+  // Debug position changes
+  useEffect(() => {
+    console.log('🎮 ChessBoard: Position changed', { currentFen })
+  }, [currentFen])
+
+  // Debug render
+  console.log('🎮 ChessBoard: Rendering with position:', currentFen)
+
+  // Sync external game state with local state (only for multiplayer games)
+  useEffect(() => {
+    // Skip sync if no gameId (demo mode) or no external FEN
+    if (!gameId || !externalFen) {
+      console.log('🔄 Demo mode or no external FEN - skipping sync', { gameId, externalFen })
+      return
+    }
+
+    if (externalFen !== currentFen) {
+      console.log('🔄 FEN mismatch detected:', {
+        external: externalFen,
+        current: currentFen,
+        gameId
+      })
+
+      // Check if this external FEN is from a recent local move
+      if (isRecentLocalMove(externalFen)) {
+        console.log('🔄 Skipping sync - external FEN is from recent local move:', externalFen)
+        return
+      }
+
+      console.log('🔄 Syncing external FEN (not a recent local move):', externalFen)
+      try {
+        // Create a new Chess instance with the external FEN to validate it
+        const externalGame = new Chess(externalFen)
+        updateGameState({
+          game: externalGame,
+          moveHistory: externalMoves || []
+        })
+        console.log('✅ External FEN sync completed')
+      } catch (error) {
+        console.error('❌ Invalid FEN from external source:', externalFen, error)
+      }
+    } else {
+      console.log('🔄 FEN match - no sync needed:', { external: externalFen, current: currentFen })
+    }
+  }, [externalFen, currentFen, externalMoves, updateGameState, isRecentLocalMove, gameId])
 
   // Custom square styles for highlighting
   const customSquareStyles = useMemo(() => {
@@ -78,27 +143,78 @@ export default function ChessBoard({
   }, [selectedSquare, possibleMoves, isCheck, gameState.game])
 
   const handlePieceDrop = ({ sourceSquare, targetSquare }: any) => {
-    if (isSpectator) return false
+    console.log('🎯 handlePieceDrop called:', { sourceSquare, targetSquare })
+    console.log('🎮 Board state:', { isSpectator, isPlayerTurn })
+
+    if (isSpectator) {
+      console.log('❌ Cannot move: spectator mode')
+      return false
+    }
+
+    // Check if it's the player's turn
+    if (!isPlayerTurn) {
+      console.log('❌ Cannot move: not your turn')
+      return false
+    }
+
+    console.log('🔄 Attempting move with chess.js...')
+    console.log('🔍 Current FEN before move:', currentFen)
 
     const result = onPieceDrop(sourceSquare as Square, targetSquare as Square)
+    console.log('🎯 Chess.js move result:', result)
+    console.log('🔍 Current FEN after move:', currentFen)
 
     if (result && onMove) {
+      console.log('✅ Move successful, calling onMove...')
       // Get the last move from the game
       const history = gameState.game.history({ verbose: true })
       const lastMove = history[history.length - 1]
-      onMove(lastMove)
+
+      // Add the FEN position after the move
+      const moveWithFen = {
+        ...lastMove,
+        after: gameState.game.fen(), // Current FEN position after the move
+        fen: gameState.game.fen()    // Alternative property name for compatibility
+      }
+
+      console.log('📝 Last move with FEN:', moveWithFen)
+      console.log('🎯 About to call onMove - local FEN:', gameState.game.fen())
+      onMove(moveWithFen)
+      console.log('🎯 onMove called - local FEN after:', gameState.game.fen())
+    } else {
+      console.log('❌ Move failed or no onMove callback', { result, hasOnMove: !!onMove })
     }
 
+    console.log('🔄 Returning result to react-chessboard:', result)
     return result
   }
 
   const handleSquareClick = ({ square }: any) => {
-    if (!isSpectator) {
-      onSquareClick(square as Square)
+    console.log('🎯 handleSquareClick called:', square)
+    console.log('🎮 Click state:', { isSpectator, isPlayerTurn })
+
+    if (isSpectator) {
+      console.log('❌ Cannot click: spectator mode')
+      return
     }
+
+    if (!isPlayerTurn) {
+      console.log('❌ Cannot click: not your turn')
+      return
+    }
+
+    console.log('🔄 Calling onSquareClick...')
+    const result = onSquareClick(square as Square)
+    console.log('🎯 Square click result:', result)
   }
 
   const getGameStatusMessage = () => {
+    // Check for resignation first
+    if (gameState.resignedBy) {
+      const resignedPlayer = gameState.resignedBy === 'white' ? 'White' : 'Black'
+      const winner = gameState.resignedBy === 'white' ? 'Black' : 'White'
+      return `${resignedPlayer} resigned! ${winner} wins!`
+    }
     if (isCheckmate) {
       const winner = gameState.game.turn() === 'w' ? 'Black' : 'White'
       return `Checkmate! ${winner} wins!`
@@ -112,58 +228,73 @@ export default function ChessBoard({
     if (gameState.gameStatus === 'waiting') {
       return 'Waiting for opponent...'
     }
-    return `${gameState.game.turn() === 'w' ? 'White' : 'Black'} to move`
+
+    const currentTurnColor = gameState.game.turn() === 'w' ? 'White' : 'Black'
+    if (isPlayerTurn) {
+      return `Your turn (${playerColor})`
+    } else {
+      return `Opponent's turn (${currentTurnColor})`
+    }
   }
 
   return (
-    <div className="flex flex-col items-center space-y-4">
+    <div className="flex flex-col items-center space-y-6 w-full max-w-lg mx-auto">
       {/* Game Status */}
-      <div className="bg-white rounded-lg shadow-md p-4 w-full max-w-md text-center">
-        <div className="flex items-center justify-center space-x-2 mb-2">
-          <Crown className="h-5 w-5 text-yellow-500" />
-          <span className="font-semibold text-gray-800">
+      <div className="bg-white rounded-xl shadow-lg p-5 w-full text-center border border-gray-200">
+        <div className="flex items-center justify-center space-x-3 mb-3">
+          <Crown className="h-6 w-6 text-yellow-500" />
+          <span className="font-bold text-gray-800 text-lg">
             {getGameStatusMessage()}
           </span>
         </div>
-        
+
         {gameState.gameStatus === 'active' && (
-          <div className="text-sm text-gray-600">
-            Turn: {gameState.game.turn() === 'w' ? 'White' : 'Black'}
+          <div className="text-sm text-gray-600 bg-gray-50 rounded-lg py-2 px-3">
+            Current Turn: <span className="font-semibold">{gameState.game.turn() === 'w' ? 'White' : 'Black'}</span>
           </div>
         )}
       </div>
 
       {/* Chess Board */}
-      <div className="relative">
+      <div className={`relative w-full ${!isPlayerTurn && !isSpectator ? 'opacity-75' : ''}`}>
         <Chessboard
           options={{
             position: currentFen,
             onPieceDrop: handlePieceDrop,
-            onSquareClick: !isSpectator ? handleSquareClick : undefined,
+            onSquareClick: !isSpectator && isPlayerTurn ? handleSquareClick : undefined,
             boardOrientation: playerColor,
             squareStyles: customSquareStyles,
             allowDrawingArrows: true,
+            allowDragging: !isSpectator && isPlayerTurn, // Only allow dragging when it's the player's turn
+            animationDurationInMs: 200, // Add animation duration
+
             boardStyle: {
-              borderRadius: '8px',
-              boxShadow: '0 10px 25px rgba(0, 0, 0, 0.2)',
-              width: '400px',
-              height: '400px'
+              borderRadius: '12px',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15), 0 8px 16px rgba(0, 0, 0, 0.1)',
+              width: '100%',
+              maxWidth: '480px',
+              aspectRatio: '1'
             }
           }}
         />
         
         {/* Game Over Overlay */}
         {isGameOver && (
-          <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
-            <div className="bg-white p-6 rounded-lg text-center">
-              <h3 className="text-xl font-bold mb-2">Game Over</h3>
-              <p className="text-gray-600 mb-4">{getGameStatusMessage()}</p>
+          <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center rounded-xl backdrop-blur-sm">
+            <div className="bg-white p-8 rounded-xl text-center shadow-2xl border border-gray-200 max-w-sm mx-4">
+              <div className="mb-4">
+                <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Crown className="h-8 w-8 text-yellow-600" />
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-2">Game Over</h3>
+                <p className="text-gray-600 text-lg">{getGameStatusMessage()}</p>
+              </div>
               {!isSpectator && (
                 <button
                   onClick={resetGame}
-                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 font-semibold"
                 >
-                  <RotateCcw className="h-4 w-4 mr-2" />
+                  <RotateCcw className="h-5 w-5 mr-2" />
                   New Game
                 </button>
               )}
@@ -174,38 +305,61 @@ export default function ChessBoard({
 
       {/* Game Controls */}
       {!isSpectator && gameState.gameStatus === 'active' && (
-        <div className="flex space-x-2">
+        <div className="flex flex-col sm:flex-row gap-3 w-full">
           <button
             onClick={resetGame}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+            className="flex-1 inline-flex items-center justify-center px-4 py-3 border border-gray-300 text-sm font-semibold rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 shadow-sm"
           >
-            <RotateCcw className="h-4 w-4 mr-1" />
-            Reset
+            <RotateCcw className="h-4 w-4 mr-2" />
+            Reset Game
           </button>
-          
+
           <button
-            className="inline-flex items-center px-3 py-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50"
+            onClick={() => {
+              if (window.confirm('Are you sure you want to resign? This will end the game.')) {
+                resignGame()
+              }
+            }}
+            className="flex-1 inline-flex items-center justify-center px-4 py-3 border border-red-300 text-sm font-semibold rounded-lg text-red-700 bg-white hover:bg-red-50 transition-colors duration-200 shadow-sm"
           >
-            <Flag className="h-4 w-4 mr-1" />
+            <Flag className="h-4 w-4 mr-2" />
             Resign
           </button>
         </div>
       )}
 
       {/* Move History */}
-      <div className="bg-white rounded-lg shadow-md p-4 w-full max-w-md">
-        <h3 className="font-semibold text-gray-800 mb-2">Move History</h3>
-        <div className="max-h-32 overflow-y-auto text-sm">
+      <div className="bg-white rounded-xl shadow-lg p-6 w-full border border-gray-200">
+        <div className="flex items-center mb-4">
+          <div className="bg-blue-100 text-blue-600 rounded-lg p-2 mr-3">
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+            </svg>
+          </div>
+          <h3 className="text-xl font-bold text-gray-800">Move History</h3>
+        </div>
+        <div className="max-h-40 overflow-y-auto">
           {gameState.moveHistory.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {gameState.moveHistory.map((move, index) => (
-                <div key={index} className="text-gray-600">
-                  {Math.floor(index / 2) + 1}.{index % 2 === 0 ? '' : '..'} {move}
+                <div key={index} className="flex items-center p-2 rounded-lg bg-gray-50 text-gray-700 font-mono text-sm">
+                  <span className="text-gray-500 mr-2 font-semibold">
+                    {Math.floor(index / 2) + 1}.{index % 2 === 0 ? '' : '..'}
+                  </span>
+                  <span className="font-semibold">{move}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-gray-500">No moves yet</p>
+            <div className="text-center py-8">
+              <div className="text-gray-400 mb-2">
+                <svg className="w-12 h-12 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <p className="text-gray-500 font-medium">No moves yet</p>
+              <p className="text-gray-400 text-sm mt-1">Make your first move to start!</p>
+            </div>
           )}
         </div>
       </div>
