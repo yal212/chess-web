@@ -69,11 +69,39 @@ export default function ChessBoard({
       return
     }
 
-    if (externalFen !== currentFen) {
+    // Additional safety check - if we're in demo mode, never sync
+    if (gameId === 'demo' || !gameId.includes('-')) {
+      console.log('🔄 Demo mode detected - skipping sync', { gameId })
+      return
+    }
+
+    // Normalize FENs for comparison (ignore move counters)
+    const normalizeForComparison = (fen: string) => {
+      const parts = fen.split(' ')
+      return parts.slice(0, 4).join(' ') // Only compare position, turn, castling, en passant
+    }
+
+    const normalizedExternal = normalizeForComparison(externalFen)
+    const normalizedCurrent = normalizeForComparison(currentFen)
+
+    // Skip sync if the external FEN is the starting position and we've already made a move
+    const isStartingPosition = externalFen.startsWith('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w')
+    const weHaveMoved = !currentFen.startsWith('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w')
+
+    if (isStartingPosition && weHaveMoved) {
+      console.log('🔄 Skipping sync - external FEN is starting position but we have already moved')
+      return
+    }
+
+    if (normalizedExternal !== normalizedCurrent) {
       console.log('🔄 FEN mismatch detected:', {
         external: externalFen,
         current: currentFen,
-        gameId
+        normalizedExternal,
+        normalizedCurrent,
+        gameId,
+        isStartingPosition,
+        weHaveMoved
       })
 
       // Check if this external FEN is from a recent local move
@@ -82,18 +110,39 @@ export default function ChessBoard({
         return
       }
 
-      console.log('🔄 Syncing external FEN (not a recent local move):', externalFen)
+      // Double-check that the positions are actually different after normalization
+      // This prevents syncing when only move counters have changed
       try {
-        // Create a new Chess instance with the external FEN to validate it
+        const currentGame = new Chess(currentFen)
         const externalGame = new Chess(externalFen)
-        updateGameState({
-          game: externalGame,
-          moveHistory: externalMoves || []
-        })
-        console.log('✅ External FEN sync completed')
+
+        // Compare the actual board positions
+        if (currentGame.ascii() === externalGame.ascii() &&
+            currentGame.turn() === externalGame.turn()) {
+          console.log('🔄 Positions are identical, skipping sync')
+          return
+        }
       } catch (error) {
-        console.error('❌ Invalid FEN from external source:', externalFen, error)
+        console.log('🔄 Error comparing positions, proceeding with sync:', error)
       }
+
+      // Add a small delay to allow local state to settle before syncing
+      const syncTimeout = setTimeout(() => {
+        console.log('🔄 Syncing external FEN (not a recent local move):', externalFen)
+        try {
+          // Create a new Chess instance with the external FEN to validate it
+          const externalGame = new Chess(externalFen)
+          updateGameState({
+            game: externalGame,
+            moveHistory: externalMoves || []
+          })
+          console.log('✅ External FEN sync completed')
+        } catch (error) {
+          console.error('❌ Invalid FEN from external source:', externalFen, error)
+        }
+      }, 150) // Slightly longer delay to prevent race conditions
+
+      return () => clearTimeout(syncTimeout)
     } else {
       console.log('🔄 FEN match - no sync needed:', { external: externalFen, current: currentFen })
     }
@@ -160,33 +209,51 @@ export default function ChessBoard({
     console.log('🔄 Attempting move with chess.js...')
     console.log('🔍 Current FEN before move:', currentFen)
 
-    const result = onPieceDrop(sourceSquare as Square, targetSquare as Square)
-    console.log('🎯 Chess.js move result:', result)
-    console.log('🔍 Current FEN after move:', currentFen)
+    // Test the move first to get move data before updating state
+    try {
+      const testGame = new Chess(currentFen)
+      const testMove = testGame.move({
+        from: sourceSquare,
+        to: targetSquare,
+        promotion: 'q'
+      })
 
-    if (result && onMove) {
-      console.log('✅ Move successful, calling onMove...')
-      // Get the last move from the game
-      const history = gameState.game.history({ verbose: true })
-      const lastMove = history[history.length - 1]
-
-      // Add the FEN position after the move
-      const moveWithFen = {
-        ...lastMove,
-        after: gameState.game.fen(), // Current FEN position after the move
-        fen: gameState.game.fen()    // Alternative property name for compatibility
+      if (!testMove) {
+        console.log('❌ Invalid move detected in handlePieceDrop')
+        return false
       }
 
-      console.log('📝 Last move with FEN:', moveWithFen)
-      console.log('🎯 About to call onMove - local FEN:', gameState.game.fen())
-      onMove(moveWithFen)
-      console.log('🎯 onMove called - local FEN after:', gameState.game.fen())
-    } else {
-      console.log('❌ Move failed or no onMove callback', { result, hasOnMove: !!onMove })
-    }
+      const newFen = testGame.fen()
+      console.log('🎯 Valid move detected:', { move: testMove.san, newFen })
 
-    console.log('🔄 Returning result to react-chessboard:', result)
-    return result
+      // Now make the actual move
+      const result = onPieceDrop(sourceSquare as Square, targetSquare as Square)
+      console.log('🎯 Chess.js move result:', result)
+
+      // Only proceed with onMove callback if the move was successful
+      if (result && onMove) {
+        console.log('✅ Move successful, calling onMove immediately...')
+
+        // Create the move object with all necessary data
+        const moveWithFen = {
+          ...testMove,
+          after: newFen,
+          fen: newFen
+        }
+
+        console.log('📝 Move with FEN:', moveWithFen)
+        onMove(moveWithFen)
+        console.log('🎯 onMove called successfully')
+      } else {
+        console.log('❌ Move failed or no onMove callback', { result, hasOnMove: !!onMove })
+      }
+
+      console.log('🔄 Returning result to react-chessboard:', result)
+      return result
+    } catch (error) {
+      console.log('❌ Exception in handlePieceDrop:', error)
+      return false
+    }
   }
 
   const handleSquareClick = ({ square }: any) => {

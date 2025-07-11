@@ -1,9 +1,12 @@
 ### To Do
 - account settings
-- resign in demo mode
-- highlight the chess piece you can take in demo mode
+- resign button
+- highlight the chess piece you can take
 - chat in game
-- see and join already created game
+- option to remove created games
+- time limit for games created without both players entered
+- make the UI better
+- refresh game button
 - more not listed yet
 
 

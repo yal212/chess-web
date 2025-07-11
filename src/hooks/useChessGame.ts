@@ -58,13 +58,18 @@ export function useChessGame(initialFen?: string) {
 
         console.log('🎯 makeMove: Local move made', { from, to, newFen, san: move.san })
 
-        // Track this move as a recent local move
+        // Track this move as a recent local move with normalized FEN
+        const normalizedNewFen = normalizeFen(newFen)
         setRecentLocalMoves(prev => {
           const newSet = new Set(prev)
-          newSet.add(newFen)
-          console.log('🎯 makeMove: Added to recent local moves', { newFen, totalTracked: newSet.size })
-          // Keep only the last 5 moves to prevent memory leaks
-          if (newSet.size > 5) {
+          newSet.add(normalizedNewFen)
+          console.log('🎯 makeMove: Added to recent local moves', {
+            originalFen: newFen,
+            normalizedFen: normalizedNewFen,
+            totalTracked: newSet.size
+          })
+          // Keep only the last 3 moves to prevent memory leaks
+          if (newSet.size > 3) {
             const firstItem = newSet.values().next().value
             if (firstItem) {
               newSet.delete(firstItem)
@@ -77,32 +82,29 @@ export function useChessGame(initialFen?: string) {
         setTimeout(() => {
           setRecentLocalMoves(prev => {
             const newSet = new Set(prev)
-            newSet.delete(newFen)
-            console.log('🎯 makeMove: Cleared from recent local moves after timeout', { newFen })
+            newSet.delete(normalizedNewFen)
+            console.log('🎯 makeMove: Cleared from recent local moves after timeout', { normalizedNewFen })
             return newSet
           })
-        }, 3000) // Increased to 3 seconds to be safer
+        }, 5000) // Increased to 5 seconds to be safer for slower networks
 
-        // Update state with the new game state immediately
+        // Update state with the new game state immediately and synchronously
         console.log('🔄 makeMove: Updating game state', {
           oldFen: gameState.game.fen(),
           newFen: newFen,
           move: move.san
         })
 
-        setGameState(prev => {
-          console.log('🔄 makeMove: setState callback', {
-            prevFen: prev.game.fen(),
-            newFen: newFen
-          })
-          return {
-            ...prev,
-            game: gameCopy, // Use the updated game copy
-            moveHistory: [...prev.moveHistory, move.san]
-          }
-        })
+        // Use a synchronous state update approach
+        const newGameState = {
+          ...gameState,
+          game: gameCopy, // Use the updated game copy
+          moveHistory: [...gameState.moveHistory, move.san]
+        }
 
-        console.log('✅ makeMove: State update completed')
+        setGameState(newGameState)
+
+        console.log('✅ makeMove: State update completed synchronously')
         return { success: true, move }
       } else {
         console.log('❌ makeMove: Invalid move')
@@ -147,12 +149,90 @@ export function useChessGame(initialFen?: string) {
   const onPieceDrop = useCallback((sourceSquare: Square, targetSquare: Square) => {
     console.log('🎯 onPieceDrop: Starting move', { sourceSquare, targetSquare })
 
-    const result = makeMove(sourceSquare, targetSquare)
-    const success = result?.success || false
+    try {
+      // Create a copy of the game to test and make the move
+      const gameCopy = new Chess(gameState.game.fen())
+      const move = gameCopy.move({
+        from: sourceSquare,
+        to: targetSquare,
+        promotion: 'q' // Default to queen promotion
+      })
 
-    console.log('🎯 onPieceDrop: Move result', { success, result })
-    return success
-  }, [makeMove])
+      if (!move) {
+        console.log('🎯 onPieceDrop: Invalid move detected')
+        return false
+      }
+
+      console.log('🎯 onPieceDrop: Valid move detected', { move: move.san, newFen: gameCopy.fen() })
+
+      // Move is valid - update state immediately and synchronously
+      const newFen = gameCopy.fen()
+      // Normalize FEN for tracking (remove move counters)
+      const normalizedNewFen = newFen.split(' ').slice(0, 4).join(' ')
+
+      // Track this move as a recent local move - track both the new position AND the old position
+      setRecentLocalMoves(prev => {
+        const newSet = new Set(prev)
+        // Add the new position after the move
+        newSet.add(normalizedNewFen)
+        // Also add the old position to prevent syncing back to it
+        const oldNormalizedFen = gameState.game.fen().split(' ').slice(0, 4).join(' ')
+        newSet.add(oldNormalizedFen)
+
+        console.log('🎯 onPieceDrop: Added to recent local moves', {
+          originalFen: newFen,
+          normalizedFen: normalizedNewFen,
+          oldNormalizedFen,
+          totalTracked: newSet.size
+        })
+        // Keep only the last 6 moves to prevent memory leaks (3 moves = 6 positions)
+        if (newSet.size > 6) {
+          const firstItem = newSet.values().next().value
+          if (firstItem) {
+            newSet.delete(firstItem)
+          }
+        }
+        return newSet
+      })
+
+      // Clear the recent moves after a longer delay to ensure sync is complete
+      setTimeout(() => {
+        setRecentLocalMoves(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(normalizedNewFen)
+          const oldNormalizedFen = gameState.game.fen().split(' ').slice(0, 4).join(' ')
+          newSet.delete(oldNormalizedFen)
+          console.log('🎯 onPieceDrop: Cleared from recent local moves after timeout', {
+            normalizedNewFen,
+            oldNormalizedFen,
+            remaining: newSet.size
+          })
+          return newSet
+        })
+      }, 10000) // Increased to 10 seconds to handle slower networks and database updates
+
+      // Update the game state immediately
+      setGameState(prev => {
+        const newState = {
+          ...prev,
+          game: gameCopy,
+          moveHistory: [...prev.moveHistory, move.san]
+        }
+        console.log('🎯 onPieceDrop: State updated', {
+          oldFen: prev.game.fen(),
+          newFen: gameCopy.fen(),
+          move: move.san
+        })
+        return newState
+      })
+
+      console.log('🎯 onPieceDrop: Move successful, returning true')
+      return true
+    } catch (error) {
+      console.log('🎯 onPieceDrop: Exception during move', error)
+      return false
+    }
+  }, [gameState.game])
 
   // Reset game
   const resetGame = useCallback(() => {
@@ -198,17 +278,26 @@ export function useChessGame(initialFen?: string) {
   // Check if a FEN position is a recent local move
   const isRecentLocalMove = useCallback((fen: string) => {
     const normalizedFen = normalizeFen(fen)
-    const isRecent = Array.from(recentLocalMoves).some(trackedFen =>
-      normalizeFen(trackedFen) === normalizedFen
-    )
+    const isRecent = recentLocalMoves.has(normalizedFen)
+
     console.log('🎯 isRecentLocalMove: Checking FEN', {
       fen,
       normalizedFen,
       isRecent,
-      trackedMoves: Array.from(recentLocalMoves).map(f => normalizeFen(f))
+      trackedMoves: Array.from(recentLocalMoves),
+      currentGameFen: gameState.game.fen(),
+      currentNormalized: normalizeFen(gameState.game.fen())
     })
+
+    // Also check if this FEN matches our current game state
+    const currentNormalized = normalizeFen(gameState.game.fen())
+    if (normalizedFen === currentNormalized) {
+      console.log('🎯 isRecentLocalMove: FEN matches current game state, treating as recent')
+      return true
+    }
+
     return isRecent
-  }, [recentLocalMoves, normalizeFen])
+  }, [recentLocalMoves, normalizeFen, gameState.game])
 
   // Update game from external state (for multiplayer)
   const updateGameState = useCallback((newState: Partial<ChessGameState>) => {
