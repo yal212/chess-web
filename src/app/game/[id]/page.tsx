@@ -6,6 +6,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import Navigation from '@/components/layout/Navigation'
 import ChessBoard from '@/components/chess/ChessBoard'
+import RealtimeDebugger from '@/components/debug/RealtimeDebugger'
+import { quickTurnTest } from '@/utils/debug-turn-validation'
 import { ArrowLeft, Users, MessageCircle } from 'lucide-react'
 import Link from 'next/link'
 
@@ -39,23 +41,54 @@ export default function GamePage() {
   // Track when the current user is making a move to prevent sync conflicts
   const [isUserMakingMove, setIsUserMakingMove] = useState(false)
   const userMoveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const subscriptionRef = useRef<any>(null)
+  const lastUpdateRef = useRef<string>('')
+  const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const [usePolling, setUsePolling] = useState(false)
 
   useEffect(() => {
     if (gameId && user) {
       fetchGame()
-      subscribeToGameUpdates()
+      const unsubscribe = subscribeToGameUpdates()
+
+      // Store unsubscribe function
+      subscriptionRef.current = unsubscribe
+
+      // Start polling as fallback after 5 seconds if real-time isn't working
+      const fallbackTimer = setTimeout(() => {
+        if (!usePolling) { // Only start if not already polling
+          console.log('🔄 Starting polling fallback for real-time')
+          setUsePolling(true)
+          startPolling()
+        }
+      }, 5000)
+
+      return () => {
+        clearTimeout(fallbackTimer)
+      }
     }
 
-    // Cleanup timeout on unmount
+    // Cleanup timeout and subscription on unmount
     return () => {
       if (userMoveTimeoutRef.current) {
         clearTimeout(userMoveTimeoutRef.current)
+      }
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current)
+      }
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current)
+      }
+      if (subscriptionRef.current) {
+        subscriptionRef.current()
       }
     }
   }, [gameId, user])
 
   const fetchGame = async () => {
     try {
+      console.log('🔄 Fetching game data...')
       const { data, error } = await supabase
         .from('games')
         .select(`
@@ -67,12 +100,32 @@ export default function GamePage() {
         .single()
 
       if (error) throw error
-      
+
       // Check if user is authorized to view this game
       if (data.white_player_id !== user?.id && data.black_player_id !== user?.id) {
         setError('You are not authorized to view this game')
         return
       }
+
+      // Check if this is actually new data
+      const dataHash = JSON.stringify({
+        moves: data.moves,
+        game_state: data.game_state,
+        status: data.status,
+        updated_at: data.updated_at
+      })
+
+      if (dataHash === lastUpdateRef.current) {
+        console.log('🔄 No new data, skipping update')
+        return
+      }
+
+      lastUpdateRef.current = dataHash
+      console.log('✅ Game data updated:', {
+        moves: data.moves?.length || 0,
+        status: data.status,
+        updated_at: data.updated_at
+      })
 
       setGame(data)
     } catch (error) {
@@ -83,56 +136,225 @@ export default function GamePage() {
     }
   }
 
+  // Debounced fetch to prevent rapid successive calls
+  const debouncedFetchGame = () => {
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current)
+    }
+
+    fetchTimeoutRef.current = setTimeout(() => {
+      fetchGame()
+    }, 100) // 100ms debounce
+  }
+
+  // Polling fallback for when real-time isn't working
+  const startPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+    }
+
+    console.log('🔄 Starting polling every 2 seconds')
+    pollingIntervalRef.current = setInterval(() => {
+      if (!isUserMakingMove) {
+        console.log('🔄 Polling: fetching game state')
+        fetchGame()
+      }
+    }, 2000) // Poll every 2 seconds
+  }
+
+  const stopPolling = () => {
+    if (pollingIntervalRef.current) {
+      console.log('🔄 Stopping polling')
+      clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
+    }
+  }
+
+  // Function to clean up corrupted game state
+  const cleanupGameState = async () => {
+    if (!game || !user) return
+
+    try {
+      console.log('🧹 Cleaning up corrupted game state...')
+
+      // Reset to starting position
+      const startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+
+      const { error } = await supabase
+        .from('games')
+        .update({
+          game_state: startingFen,
+          moves: [],
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', gameId)
+
+      if (error) {
+        console.error('❌ Failed to cleanup game state:', error)
+        alert('Failed to reset game state')
+        return
+      }
+
+      console.log('✅ Game state cleaned up successfully')
+      alert('Game state has been reset to starting position')
+
+      // Refresh the game
+      fetchGame()
+    } catch (error) {
+      console.error('❌ Error cleaning up game state:', error)
+      alert('Failed to cleanup game state')
+    }
+  }
+
+  // Function to fix the current corrupted game with e4, d5
+  const fixCurrentGame = async () => {
+    if (!game || !user) return
+
+    try {
+      console.log('🔧 Fixing current corrupted game...')
+
+      // Set the correct state: e4, d5 (white to move)
+      const correctFen = 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2'
+      const correctMoves = ['e4', 'd5']
+
+      const { error } = await supabase
+        .from('games')
+        .update({
+          game_state: correctFen,
+          moves: correctMoves,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', gameId)
+
+      if (error) {
+        console.error('❌ Failed to fix game state:', error)
+        alert('Failed to fix game state')
+        return
+      }
+
+      console.log('✅ Game state fixed successfully')
+      alert('Game fixed! Now shows e4, d5 - White to move')
+
+      // Refresh the game
+      fetchGame()
+    } catch (error) {
+      console.error('❌ Error fixing game state:', error)
+      alert('Failed to fix game state')
+    }
+  }
+
   const subscribeToGameUpdates = () => {
-    const subscription = supabase
-      .channel(`game-${gameId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'games',
-          filter: `id=eq.${gameId}`
-        },
-        (payload) => {
-          console.log('🔔 Real-time update received:', payload)
+    if (!supabase) {
+      console.warn('⚠️ Supabase not configured, skipping real-time subscription')
+      return () => {}
+    }
 
-          // If the current user is making a move, delay the refetch to avoid conflicts
-          if (isUserMakingMove) {
-            console.log('🔄 User is making move, delaying refetch...')
-            setTimeout(() => {
-              console.log('🔄 Delayed refetch after user move')
-              fetchGame()
-            }, 1000) // Wait 1 second for local state to settle
-            return
-          }
+    console.log('📡 Setting up real-time subscription for game:', gameId)
 
-          // Only refetch if this update wasn't made by the current user
-          // This prevents unnecessary refetches when the user makes their own move
-          if (payload.new && payload.old) {
-            const newMovesLength = payload.new.moves?.length || 0
-            const oldMovesLength = payload.old.moves?.length || 0
+    try {
+      const subscription = supabase
+        .channel(`game-${gameId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'games',
+            filter: `id=eq.${gameId}`
+          },
+          (payload) => {
+            console.log('🔔 Real-time update received:', payload)
+            console.log('🔔 Event type:', payload.eventType)
+            console.log('🔔 User making move:', isUserMakingMove)
 
-            // If moves were added, this is a move update
-            if (newMovesLength > oldMovesLength) {
-              console.log('🔄 Move detected, refetching game state...')
-              fetchGame()
-            } else {
-              // Other updates (status changes, player joins, etc.)
-              console.log('🔄 Non-move update, refetching...')
-              fetchGame()
+            // Real-time is working! Stop polling if it's running
+            if (usePolling) {
+              console.log('✅ Real-time working, stopping polling fallback')
+              stopPolling()
+              setUsePolling(false)
             }
-          } else {
-            // New game or other changes
-            console.log('🔄 New game or other changes, refetching...')
-            fetchGame()
-          }
-        }
-      )
-      .subscribe()
 
-    return () => {
-      subscription.unsubscribe()
+            // If the current user is making a move, delay the refetch to avoid conflicts
+            if (isUserMakingMove) {
+              console.log('🔄 User is making move, delaying refetch...')
+              setTimeout(() => {
+                console.log('🔄 Delayed refetch after user move')
+                debouncedFetchGame()
+              }, 1500) // Increased delay for better stability
+              return
+            }
+
+            // Handle different event types
+            if (payload.eventType === 'UPDATE' && payload.new && payload.old) {
+              const newMovesLength = payload.new.moves?.length || 0
+              const oldMovesLength = payload.old.moves?.length || 0
+
+              console.log('🔄 Move count comparison:', {
+                old: oldMovesLength,
+                new: newMovesLength,
+                newMoves: payload.new.moves,
+                oldMoves: payload.old.moves
+              })
+
+              // If moves were added, this is a move update
+              if (newMovesLength > oldMovesLength) {
+                console.log('🔄 Move detected, refetching game state...')
+                debouncedFetchGame()
+              } else if (payload.new.game_state !== payload.old.game_state) {
+                // Game state changed (could be a move without move array update)
+                console.log('🔄 Game state changed, refetching...')
+                debouncedFetchGame()
+              } else if (payload.new.status !== payload.old.status) {
+                // Status change (game started, ended, etc.)
+                console.log('🔄 Status change detected, refetching...')
+                debouncedFetchGame()
+              } else {
+                console.log('🔄 Other update detected, refetching...')
+                debouncedFetchGame()
+              }
+            } else if (payload.eventType === 'INSERT') {
+              // New game created
+              console.log('🔄 New game created, refetching...')
+              debouncedFetchGame()
+            } else {
+              // Other changes
+              console.log('🔄 Other real-time event, refetching...')
+              debouncedFetchGame()
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log('📡 Subscription status:', status)
+          if (status === 'SUBSCRIBED') {
+            console.log('✅ Successfully subscribed to real-time updates')
+          } else if (status === 'CHANNEL_ERROR') {
+            console.error('❌ Real-time subscription error - falling back to polling')
+            // Start polling immediately on error
+            setUsePolling(true)
+            startPolling()
+          } else if (status === 'TIMED_OUT') {
+            console.error('❌ Real-time subscription timed out - falling back to polling')
+            setUsePolling(true)
+            startPolling()
+          } else if (status === 'CLOSED') {
+            console.log('📡 Real-time subscription closed')
+          }
+        })
+
+      return () => {
+        console.log('📡 Unsubscribing from real-time updates')
+        try {
+          subscription.unsubscribe()
+        } catch (error) {
+          console.warn('⚠️ Error unsubscribing:', error)
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to create real-time subscription:', error)
+      // Fall back to polling immediately
+      setUsePolling(true)
+      startPolling()
+      return () => {}
     }
   }
 
@@ -182,7 +404,11 @@ export default function GamePage() {
 
     // Validate the game is active and has both players
     if (game.status !== 'active' || !game.black_player_id) {
-      console.log('❌ Game is not active or missing players')
+      console.log('❌ Game is not active or missing players', {
+        status: game.status,
+        blackPlayerId: game.black_player_id,
+        hasBlackPlayer: !!game.black_player_id
+      })
       alert('Game is not active or waiting for another player')
       return
     }
@@ -207,10 +433,25 @@ export default function GamePage() {
         return
       }
 
+      if (!moveSan || moveSan === 'undefined-undefined') {
+        console.error('❌ Invalid move SAN notation:', moveSan)
+        alert('Invalid move: bad notation')
+        return
+      }
+
       console.log('📝 Move data:', { moveSan, moveAfter })
+      console.log('📝 Current game moves:', game.moves)
+      console.log('📝 Full move object:', move)
 
       // Update game state in database
       const newMoves = [...game.moves, moveSan]
+
+      console.log('📝 Updating database with:', {
+        game_state: moveAfter,
+        moves: newMoves,
+        movesLength: newMoves.length
+      })
+
       const { error } = await supabase
         .from('games')
         .update({
@@ -225,7 +466,8 @@ export default function GamePage() {
         throw error
       }
 
-      console.log('✅ Game updated successfully')
+      console.log('✅ Game updated successfully in database')
+      console.log('✅ New moves array:', newMoves)
 
       // Also record the move in game_moves table
       console.log('🔄 Attempting to record move...')
@@ -253,25 +495,49 @@ export default function GamePage() {
       userMoveTimeoutRef.current = setTimeout(() => {
         console.log('🔄 Clearing user making move flag')
         setIsUserMakingMove(false)
-      }, 2000) // Wait 2 seconds for the move to be fully processed
+      }, 3000) // Wait 3 seconds for the move to be fully processed and synced
     }
   }
 
   const getPlayerColor = (): 'white' | 'black' => {
     if (!game || !user) return 'white'
-    return game.white_player_id === user.id ? 'white' : 'black'
+
+    // Fix: Explicitly check if user is black player first
+    if (game.black_player_id === user.id) {
+      console.log('🎯 Player identified as BLACK')
+      return 'black'
+    } else if (game.white_player_id === user.id) {
+      console.log('🎯 Player identified as WHITE')
+      return 'white'
+    } else {
+      // Fallback (spectator)
+      console.log('🎯 Player identified as spectator, defaulting to WHITE view')
+      return 'white'
+    }
   }
 
   const isPlayerTurn = (): boolean => {
     if (!game || !user) return false
-    
+
     // Parse FEN to get current turn
     const fenParts = game.game_state.split(' ')
     const currentTurn = fenParts[1] // 'w' for white, 'b' for black
-    
+
     const playerColor = getPlayerColor()
-    return (currentTurn === 'w' && playerColor === 'white') || 
-           (currentTurn === 'b' && playerColor === 'black')
+    const isMyTurn = (currentTurn === 'w' && playerColor === 'white') ||
+                     (currentTurn === 'b' && playerColor === 'black')
+
+    console.log('🎯 Turn validation:', {
+      currentTurn,
+      playerColor,
+      isMyTurn,
+      fenParts,
+      userId: user.id,
+      whitePlayerId: game.white_player_id,
+      blackPlayerId: game.black_player_id
+    })
+
+    return isMyTurn
   }
 
   if (loading) {
@@ -340,6 +606,58 @@ export default function GamePage() {
               }`}>
                 {game.status}
               </div>
+              {process.env.NODE_ENV === 'development' && (
+                <div className="mt-2 space-x-2">
+                  <button
+                    onClick={() => quickTurnTest(gameId)}
+                    className="text-xs bg-gray-200 px-2 py-1 rounded"
+                  >
+                    Debug Turn
+                  </button>
+                  <button
+                    onClick={() => fetchGame()}
+                    className="text-xs bg-blue-200 px-2 py-1 rounded"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="text-xs bg-red-200 px-2 py-1 rounded"
+                  >
+                    Hard Refresh
+                  </button>
+                  <button
+                    onClick={cleanupGameState}
+                    className="text-xs bg-yellow-200 px-2 py-1 rounded"
+                  >
+                    Reset Game
+                  </button>
+                  <button
+                    onClick={fixCurrentGame}
+                    className="text-xs bg-green-200 px-2 py-1 rounded"
+                  >
+                    Fix e4,d5
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Test black move - Nc6
+                      const testMove = {
+                        san: 'Nc6',
+                        from: 'b8',
+                        to: 'c6',
+                        piece: 'n',
+                        after: 'r1bqkbnr/ppp1pppp/2n5/3p4/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+                        fen: 'r1bqkbnr/ppp1pppp/2n5/3p4/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3'
+                      }
+                      console.log('🧪 Testing black move Nc6...')
+                      handleMove(testMove)
+                    }}
+                    className="text-xs bg-purple-200 px-2 py-1 rounded"
+                  >
+                    Test Nc6
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -417,9 +735,37 @@ export default function GamePage() {
               moves={game.moves}
               isPlayerTurn={game.status === 'active' ? isPlayerTurn() : false}
             />
+            {/* Debug info */}
+            {process.env.NODE_ENV === 'development' && (
+              <div className="ml-4 p-4 bg-gray-100 rounded text-xs space-y-1">
+                <div className="font-bold">Game Debug Info:</div>
+                <div>Player Color: <span className="font-mono">{getPlayerColor()}</span></div>
+                <div>Game Status: <span className="font-mono">{game.status}</span></div>
+                <div>Current Turn: <span className="font-mono">{game.game_state.split(' ')[1]}</span> ({game.game_state.split(' ')[1] === 'w' ? 'White' : 'Black'})</div>
+                <div>Is Player Turn: <span className={`font-mono ${isPlayerTurn() ? 'text-green-600' : 'text-red-600'}`}>{isPlayerTurn().toString()}</span></div>
+                <div>Move Count: <span className="font-mono">{game.moves.length}</span></div>
+                <div>Last Move: <span className="font-mono">{game.moves[game.moves.length - 1] || 'None'}</span></div>
+                <div className="border-t pt-1">
+                  <div>White Player: <span className="font-mono text-xs">{game.white_player_id}</span></div>
+                  <div>Black Player: <span className="font-mono text-xs">{game.black_player_id || 'None'}</span></div>
+                  <div>Current User: <span className="font-mono text-xs">{user?.id}</span></div>
+                </div>
+                <div className={`mt-2 p-1 rounded ${usePolling ? 'bg-yellow-200' : 'bg-green-200'}`}>
+                  Sync: {usePolling ? 'Polling (2s)' : 'Real-time'}
+                </div>
+                <div className="text-xs text-gray-600">
+                  FEN: {game.game_state.substring(0, 30)}...
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Debug Component - only in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <RealtimeDebugger gameId={gameId} />
+      )}
     </div>
   )
 }

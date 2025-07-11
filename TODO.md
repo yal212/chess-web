@@ -7,6 +7,7 @@
 - time limit for games created without both players entered
 - make the UI better
 - refresh game button
+- move history fix
 - more not listed yet
 
 
