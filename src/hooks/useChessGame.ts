@@ -30,6 +30,7 @@ export function useChessGame(initialFen?: string) {
 
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null)
   const [possibleMoves, setPossibleMoves] = useState<Square[]>([])
+  const [captureSquares, setCaptureSquares] = useState<Square[]>([])
 
   // Track recent local moves to prevent sync conflicts
   const [recentLocalMoves, setRecentLocalMoves] = useState<Set<string>>(new Set())
@@ -38,6 +39,12 @@ export function useChessGame(initialFen?: string) {
   const getPossibleMoves = useCallback((square: Square): Square[] => {
     const moves = gameState.game.moves({ square, verbose: true })
     return moves.map(move => move.to as Square)
+  }, [gameState.game])
+
+  // Get capture moves for a square
+  const getCaptureSquares = useCallback((square: Square): Square[] => {
+    const moves = gameState.game.moves({ square, verbose: true })
+    return moves.filter(move => move.captured).map(move => move.to as Square)
   }, [gameState.game])
 
   // Make a move
@@ -124,6 +131,7 @@ export function useChessGame(initialFen?: string) {
       if (piece) {
         setSelectedSquare(square)
         setPossibleMoves(getPossibleMoves(square))
+        setCaptureSquares(getCaptureSquares(square))
       }
       return
     }
@@ -132,6 +140,7 @@ export function useChessGame(initialFen?: string) {
     if (selectedSquare === square) {
       setSelectedSquare(null)
       setPossibleMoves([])
+      setCaptureSquares([])
       return
     }
 
@@ -141,9 +150,10 @@ export function useChessGame(initialFen?: string) {
     // Clear selection regardless of move success
     setSelectedSquare(null)
     setPossibleMoves([])
+    setCaptureSquares([])
 
     return moveResult
-  }, [selectedSquare, gameState.game, getPossibleMoves, makeMove])
+  }, [selectedSquare, gameState.game, getPossibleMoves, getCaptureSquares, makeMove])
 
   // Handle piece drop (drag and drop)
   const onPieceDrop = useCallback((sourceSquare: Square, targetSquare: Square) => {
@@ -247,6 +257,7 @@ export function useChessGame(initialFen?: string) {
     }))
     setSelectedSquare(null)
     setPossibleMoves([])
+    setCaptureSquares([])
   }, [])
 
   // Resign game
@@ -265,6 +276,7 @@ export function useChessGame(initialFen?: string) {
     // Clear any selections
     setSelectedSquare(null)
     setPossibleMoves([])
+    setCaptureSquares([])
   }, [gameState.game])
 
   // Normalize FEN by removing move counters for comparison
@@ -354,6 +366,7 @@ export function useChessGame(initialFen?: string) {
     gameState,
     selectedSquare,
     possibleMoves,
+    captureSquares,
     onSquareClick,
     onPieceDrop,
     makeMove,

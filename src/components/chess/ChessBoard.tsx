@@ -31,6 +31,7 @@ export default function ChessBoard({
     gameState,
     selectedSquare,
     possibleMoves,
+    captureSquares,
     onSquareClick,
     onPieceDrop,
     resetGame,
@@ -54,28 +55,7 @@ export default function ChessBoard({
            (currentTurn === 'b' && playerColor === 'black')
   })()
 
-  // Debug board configuration
-  console.log('🎮 ChessBoard config:', {
-    gameId,
-    playerColor,
-    isSpectator,
-    isPlayerTurn,
-    actuallyPlayerTurn,
-    currentFen: currentFen.split(' ')[0] + '...',
-    currentTurn: currentFen.split(' ')[1],
-    gameStatus: gameState.gameStatus,
-    externalFen: externalFen?.split(' ')[0] + '...',
-    externalTurn: externalFen?.split(' ')[1],
-    'Turn mismatch': isPlayerTurn !== actuallyPlayerTurn
-  })
 
-  // Debug position changes
-  useEffect(() => {
-    console.log('🎮 ChessBoard: Position changed', { currentFen })
-  }, [currentFen])
-
-  // Debug render
-  console.log('🎮 ChessBoard: Rendering with position:', currentFen)
 
   // Sync external game state with local state (only for multiplayer games)
   useEffect(() => {
@@ -290,11 +270,23 @@ export default function ChessBoard({
       }
     }
 
-    // Highlight possible moves
+    // Highlight possible moves (non-capture moves)
     possibleMoves.forEach(square => {
+      // Only highlight as regular move if it's not a capture
+      if (!captureSquares.includes(square)) {
+        styles[square] = {
+          background: 'radial-gradient(circle, rgba(0,0,0,.1) 25%, transparent 25%)',
+          borderRadius: '50%'
+        }
+      }
+    })
+
+    // Highlight capture squares with red border/background
+    captureSquares.forEach(square => {
       styles[square] = {
-        background: 'radial-gradient(circle, rgba(0,0,0,.1) 25%, transparent 25%)',
-        borderRadius: '50%'
+        backgroundColor: 'rgba(255, 0, 0, 0.3)',
+        border: '3px solid rgba(255, 0, 0, 0.8)',
+        boxSizing: 'border-box'
       }
     })
 
@@ -320,7 +312,7 @@ export default function ChessBoard({
     }
 
     return styles
-  }, [selectedSquare, possibleMoves, isCheck, gameState.game])
+  }, [selectedSquare, possibleMoves, captureSquares, isCheck, gameState.game])
 
   const handlePieceDrop = ({ sourceSquare, targetSquare }: any) => {
     console.log('🎯🎯🎯 PIECE DROPPED:', { sourceSquare, targetSquare })
@@ -559,22 +551,14 @@ export default function ChessBoard({
       {/* Chess Board */}
       <div
         className={`relative w-full ${!isPlayerTurn && !isSpectator ? 'opacity-75' : ''}`}
-        onClick={() => console.log('🎯🎯🎯 BOARD CONTAINER CLICKED')}
+
       >
         {/* Simplified Chessboard - minimal configuration */}
         <Chessboard
           options={{
             position: currentFen,
-            onPieceDrop: (args: any) => {
-              console.log('🎯🎯🎯 SIMPLE PIECE DROP:', args)
-              const result = handlePieceDrop(args)
-              console.log('🎯🎯🎯 SIMPLE DROP RESULT:', result)
-              return result
-            },
-            onSquareClick: (args: any) => {
-              console.log('🎯🎯🎯 SIMPLE SQUARE CLICK:', args)
-              handleSquareClick(args)
-            },
+            onPieceDrop: handlePieceDrop,
+            onSquareClick: handleSquareClick,
             boardOrientation: playerColor,
             allowDragging: true,
             squareStyles: customSquareStyles,

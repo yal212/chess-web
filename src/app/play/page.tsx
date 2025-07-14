@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import Navigation from '@/components/layout/Navigation'
 import ChessBoard from '@/components/chess/ChessBoard'
-import { Plus, Users, Clock, Trophy } from 'lucide-react'
+import { Plus, Users, Clock, Trophy, Trash2, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 
 interface Game {
@@ -32,6 +32,34 @@ export default function PlayPage() {
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [joiningGameId, setJoiningGameId] = useState<string | null>(null)
+  const [deletingGameId, setDeletingGameId] = useState<string | null>(null)
+
+  // Time limit for waiting games (30 minutes)
+  const WAITING_GAME_TIMEOUT_MINUTES = 30
+
+  // Calculate game age in minutes
+  const getGameAgeMinutes = (createdAt: string) => {
+    const now = new Date()
+    const created = new Date(createdAt)
+    return Math.floor((now.getTime() - created.getTime()) / (1000 * 60))
+  }
+
+  // Check if a waiting game is stale (older than timeout)
+  const isGameStale = (game: Game) => {
+    return game.status === 'waiting' && getGameAgeMinutes(game.created_at) >= WAITING_GAME_TIMEOUT_MINUTES
+  }
+
+  // Format game age for display
+  const formatGameAge = (createdAt: string) => {
+    const ageMinutes = getGameAgeMinutes(createdAt)
+    if (ageMinutes < 60) {
+      return `${ageMinutes}m ago`
+    } else {
+      const hours = Math.floor(ageMinutes / 60)
+      const minutes = ageMinutes % 60
+      return minutes > 0 ? `${hours}h ${minutes}m ago` : `${hours}h ago`
+    }
+  }
 
   useEffect(() => {
     if (user) {
@@ -43,6 +71,22 @@ export default function PlayPage() {
 
       // Set up real-time subscriptions
       setupRealtimeSubscriptions()
+
+      // Clean up stale games on load
+      setTimeout(() => {
+        console.log('Running initial stale game cleanup...')
+        cleanupStaleGames()
+      }, 1000)
+
+      // Set up periodic cleanup (every 5 minutes)
+      const cleanupInterval = setInterval(() => {
+        console.log('Running periodic stale game cleanup...')
+        cleanupStaleGames()
+      }, 5 * 60 * 1000)
+
+      return () => {
+        clearInterval(cleanupInterval)
+      }
     }
 
     // Cleanup subscriptions on unmount
@@ -342,6 +386,109 @@ export default function PlayPage() {
     }
   }
 
+  const deleteGame = async (gameId: string) => {
+    if (!user) {
+      alert('You must be signed in to delete games.')
+      return
+    }
+
+    // Find the game to show confirmation dialog
+    const game = userGames.find(g => g.id === gameId)
+    if (!game) {
+      alert('Game not found.')
+      return
+    }
+
+    console.log('Delete game attempt:', {
+      gameId,
+      gameStatus: game.status,
+      gameWhitePlayer: game.white_player_id,
+      currentUser: user.id,
+      isOwner: game.white_player_id === user.id
+    })
+
+    // Only allow deletion of waiting games created by the user
+    if (game.status !== 'waiting') {
+      alert('You can only delete waiting games.')
+      return
+    }
+
+    if (game.white_player_id !== user.id) {
+      alert('You can only delete games that you created.')
+      return
+    }
+
+    // Show confirmation dialog
+    const confirmed = window.confirm(
+      `Are you sure you want to delete this game?\n\n` +
+      `This action cannot be undone.`
+    )
+
+    if (!confirmed) return
+
+    setDeletingGameId(gameId)
+
+    try {
+      console.log('Attempting to delete game:', gameId)
+      const { error } = await supabase
+        .from('games')
+        .delete()
+        .eq('id', gameId)
+
+      if (error) {
+        console.error('Game deletion error:', error)
+        alert(`Failed to delete game: ${error.message}`)
+        return
+      }
+
+      console.log('Game deleted successfully')
+      alert('Game deleted successfully!')
+      // Refresh the games list
+      fetchGames()
+    } catch (error) {
+      console.error('Unexpected error deleting game:', error)
+      alert(`Unexpected error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setDeletingGameId(null)
+    }
+  }
+
+  const cleanupStaleGames = async () => {
+    if (!user) return
+
+    try {
+      // Calculate the cutoff time (30 minutes ago)
+      const cutoffTime = new Date()
+      cutoffTime.setMinutes(cutoffTime.getMinutes() - WAITING_GAME_TIMEOUT_MINUTES)
+      const cutoffISOString = cutoffTime.toISOString()
+
+      console.log(`Cleaning up games older than: ${cutoffISOString}`)
+
+      // Use a single database query to mark all stale waiting games as abandoned
+      const { data, error } = await supabase
+        .from('games')
+        .update({ status: 'abandoned' })
+        .eq('status', 'waiting')
+        .lt('created_at', cutoffISOString)
+        .select('id')
+
+      if (error) {
+        console.error('Error cleaning up stale games:', error)
+        return
+      }
+
+      if (data && data.length > 0) {
+        console.log(`Marked ${data.length} stale games as abandoned:`, data.map(g => g.id))
+        // Refresh games list to reflect changes
+        fetchGames()
+      } else {
+        console.log('No stale games found to cleanup')
+      }
+    } catch (error) {
+      console.error('Error cleaning up stale games:', error)
+    }
+  }
+
   if (!user) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -396,10 +543,23 @@ export default function PlayPage() {
                   console.log('Manually refreshing games...')
                   fetchGames()
                 }}
-                className="w-full inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 mb-4"
+                className="w-full inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 mb-2"
               >
                 🔄 Refresh Games
               </button>
+
+              {process.env.NODE_ENV === 'development' && (
+                <button
+                  onClick={async () => {
+                    console.log('Manually cleaning up stale games...')
+                    await cleanupStaleGames()
+                    alert('Stale game cleanup completed! Check console for details.')
+                  }}
+                  className="w-full inline-flex items-center justify-center px-3 py-2 border border-orange-300 text-sm font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 mb-4"
+                >
+                  🧹 Cleanup Stale Games
+                </button>
+              )}
 
               <div className="border-t pt-4">
                 <h3 className="text-sm font-medium text-gray-900 mb-2">Game Statistics</h3>
@@ -465,12 +625,15 @@ export default function PlayPage() {
                                 <Clock className="h-3 w-3 mr-1" />
                                 {Math.floor(game.time_control / 60)}min
                               </span>
-                              <span>
-                                {new Date(game.created_at).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit'
-                                })}
+                              <span className="text-xs">
+                                {formatGameAge(game.created_at)}
                               </span>
+                              {isGameStale(game) && (
+                                <span className="flex items-center text-orange-600">
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  <span className="text-xs">Stale</span>
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -547,18 +710,42 @@ export default function PlayPage() {
                               <span className="capitalize">{game.status}</span>
                               <span className="flex items-center">
                                 <Clock className="h-3 w-3 mr-1" />
-                                {new Date(game.created_at).toLocaleDateString()}
+                                {formatGameAge(game.created_at)}
                               </span>
+                              {isGameStale(game) && (
+                                <span className="flex items-center text-orange-600">
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  <span className="text-xs">Stale</span>
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
 
-                        <Link
-                          href={`/game/${game.id}`}
-                          className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-                        >
-                          {game.status === 'active' ? 'Continue' : 'View'}
-                        </Link>
+                        <div className="flex items-center space-x-2">
+                          {/* Delete button for waiting games created by user */}
+                          {game.status === 'waiting' && game.white_player_id === user?.id && (
+                            <button
+                              onClick={() => deleteGame(game.id)}
+                              disabled={deletingGameId === game.id}
+                              className="inline-flex items-center px-2 py-2 border border-red-300 text-sm leading-4 font-medium rounded-md text-red-700 bg-white hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Delete game"
+                            >
+                              {deletingGameId === game.id ? (
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </button>
+                          )}
+
+                          <Link
+                            href={`/game/${game.id}`}
+                            className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                          >
+                            {game.status === 'active' ? 'Continue' : 'View'}
+                          </Link>
+                        </div>
                       </div>
                     </div>
                   ))

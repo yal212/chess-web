@@ -10,6 +10,23 @@ export default function DebugPage() {
   const [diagnostics, setDiagnostics] = useState<any>({})
   const [loading, setLoading] = useState(true)
 
+  // Only allow access in development mode
+  if (process.env.NODE_ENV !== 'development') {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Navigation />
+        <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+          <div className="text-center">
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">
+              Page Not Found
+            </h1>
+            <p className="text-gray-600">This page is only available in development mode.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   useEffect(() => {
     runDiagnostics()
   }, [user])

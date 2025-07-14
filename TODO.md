@@ -1,5 +1,4 @@
 ### To Do
-- account settings
 - resign button
 - highlight the chess piece you can take
 - chat in game
@@ -8,9 +7,10 @@
 - make the UI better
 - refresh game button
 - move history fix
+- account settings
 - more not listed yet
+- remove abandoned games
 
-
-### commands to learn
+### useful commands
 - npm run dev
     - run web

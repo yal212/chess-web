@@ -72,51 +72,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* Debug Section - Only show in development */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="mx-4 mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-          <h3 className="font-bold text-gray-800 mb-2">Authentication Debug Info</h3>
-          <div className="text-sm space-y-1">
-            <p><strong>User:</strong> {user ? `${user.display_name} (${user.email})` : 'Not signed in'}</p>
-            <p><strong>Loading:</strong> {loading ? 'Yes' : 'No'}</p>
-            <p><strong>Supabase User:</strong> {supabaseUser ? `Yes - ${supabaseUser.email}` : 'No'}</p>
-            {supabaseUser && !user && (
-              <div className="mt-2 p-2 bg-yellow-100 border border-yellow-300 rounded">
-                <p className="text-yellow-800 font-semibold">⚠️ Profile Loading Issue Detected</p>
-                <p className="text-yellow-700 text-xs">Supabase auth successful but user profile not loaded. This indicates a database access issue.</p>
-                <div className="mt-2 space-x-2">
-                  <button
-                    onClick={() => {
-                      // Force create user from auth data
-                      const authUser = supabaseUser;
-                      const displayName = authUser.user_metadata?.display_name ||
-                                         authUser.user_metadata?.name ||
-                                         authUser.user_metadata?.full_name ||
-                                         authUser.user_metadata?.given_name ||
-                                         authUser.email?.split('@')[0] ||
-                                         'Anonymous';
-
-                      // This is a temporary fix - we'll trigger a page reload with user data
-                      console.log('Forcing user creation with auth data');
-                      window.location.reload();
-                    }}
-                    className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
-                  >
-                    Fix Now
-                  </button>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="px-2 py-1 bg-yellow-500 text-white text-xs rounded hover:bg-yellow-600"
-                  >
-                    Retry
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Hero Section */}
       <div className="relative bg-white overflow-hidden">
         <div className="max-w-7xl mx-auto">

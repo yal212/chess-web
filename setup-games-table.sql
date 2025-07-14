@@ -68,6 +68,10 @@ CREATE POLICY "Players can update their games" ON games FOR UPDATE USING (
   auth.uid() = white_player_id OR auth.uid() = black_player_id
 );
 
+CREATE POLICY "Users can delete games they created" ON games FOR DELETE USING (
+  auth.uid() = white_player_id
+);
+
 -- Game moves policies
 CREATE POLICY "Users can view moves from their games" ON game_moves FOR SELECT USING (
   EXISTS (

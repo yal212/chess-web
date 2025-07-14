@@ -4,7 +4,7 @@ A modern, real-time multiplayer chess website built with Next.js 15, React 18, T
 
 ## Features
 
-- 🎯 **Real-time Multiplayer**: Play chess with friends online with instant move synchronization
+- 🎯 **Real-time Multiplayer**: Play chess with friends online with instant move synchronization and intelligent connection management
 - 🔐 **Google OAuth Authentication**: Secure sign-in with Google accounts
 - 📊 **Match History & Stats**: Track your games, wins, losses, and performance
 - 💬 **In-game Chat**: Communicate with your opponent during games

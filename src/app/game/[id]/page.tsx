@@ -6,8 +6,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import Navigation from '@/components/layout/Navigation'
 import ChessBoard from '@/components/chess/ChessBoard'
-import RealtimeDebugger from '@/components/debug/RealtimeDebugger'
-import { quickTurnTest } from '@/utils/debug-turn-validation'
+import ChatBox from '@/components/chess/ChatBox'
+import { connectionManager } from '@/utils/realtime-connection-manager'
 import { ArrowLeft, Users, MessageCircle } from 'lucide-react'
 import Link from 'next/link'
 
@@ -45,27 +45,46 @@ export default function GamePage() {
   const lastUpdateRef = useRef<string>('')
   const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const subscriptionRetryCount = useRef<number>(0)
   const [usePolling, setUsePolling] = useState(false)
 
   useEffect(() => {
     if (gameId && user) {
       fetchGame()
+
+      // Set up connection monitoring
+      const removeConnectionListener = connectionManager.addListener((status) => {
+        if (!status.isConnected && !usePolling) {
+          setUsePolling(true)
+          startPolling()
+        } else if (status.isConnected && usePolling && connectionManager.shouldUseRealtime()) {
+          stopPolling()
+          setUsePolling(false)
+
+          // Re-establish subscription if needed
+          if (!subscriptionRef.current) {
+            const unsubscribe = subscribeToGameUpdates()
+            subscriptionRef.current = unsubscribe
+          }
+        }
+      })
+
       const unsubscribe = subscribeToGameUpdates()
 
       // Store unsubscribe function
       subscriptionRef.current = unsubscribe
 
-      // Start polling as fallback after 5 seconds if real-time isn't working
+      // Start polling as fallback after 10 seconds if real-time isn't working
       const fallbackTimer = setTimeout(() => {
-        if (!usePolling) { // Only start if not already polling
-          console.log('🔄 Starting polling fallback for real-time')
+        if (!usePolling && subscriptionRetryCount.current === 0 && !connectionManager.shouldUseRealtime()) {
           setUsePolling(true)
           startPolling()
         }
-      }, 5000)
+      }, 10000)
 
       return () => {
         clearTimeout(fallbackTimer)
+        removeConnectionListener()
       }
     }
 
@@ -88,7 +107,6 @@ export default function GamePage() {
 
   const fetchGame = async () => {
     try {
-      console.log('🔄 Fetching game data...')
       const { data, error } = await supabase
         .from('games')
         .select(`
@@ -153,13 +171,15 @@ export default function GamePage() {
       clearInterval(pollingIntervalRef.current)
     }
 
-    console.log('🔄 Starting polling every 2 seconds')
+    const pollingInterval = connectionManager.getRecommendedPollingInterval()
+    console.log(`🔄 Starting polling every ${pollingInterval}ms`)
+
     pollingIntervalRef.current = setInterval(() => {
       if (!isUserMakingMove) {
         console.log('🔄 Polling: fetching game state')
         fetchGame()
       }
-    }, 2000) // Poll every 2 seconds
+    }, pollingInterval)
   }
 
   const stopPolling = () => {
@@ -170,76 +190,38 @@ export default function GamePage() {
     }
   }
 
-  // Function to clean up corrupted game state
-  const cleanupGameState = async () => {
-    if (!game || !user) return
 
-    try {
-      console.log('🧹 Cleaning up corrupted game state...')
 
-      // Reset to starting position
-      const startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+  // Handle subscription failures with retry logic
+  const handleSubscriptionFailure = (reason: string) => {
+    subscriptionRetryCount.current++
 
-      const { error } = await supabase
-        .from('games')
-        .update({
-          game_state: startingFen,
-          moves: [],
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', gameId)
+    if (subscriptionRetryCount.current <= 3) {
+      console.log(`🔄 Retrying real-time subscription (attempt ${subscriptionRetryCount.current}/3) after ${reason}`)
 
-      if (error) {
-        console.error('❌ Failed to cleanup game state:', error)
-        alert('Failed to reset game state')
-        return
-      }
+      // Exponential backoff: 2s, 4s, 8s
+      const retryDelay = 2000 * Math.pow(2, subscriptionRetryCount.current - 1)
 
-      console.log('✅ Game state cleaned up successfully')
-      alert('Game state has been reset to starting position')
+      setTimeout(() => {
+        try {
+          // Clean up existing subscription
+          if (subscriptionRef.current) {
+            subscriptionRef.current()
+          }
 
-      // Refresh the game
-      fetchGame()
-    } catch (error) {
-      console.error('❌ Error cleaning up game state:', error)
-      alert('Failed to cleanup game state')
-    }
-  }
-
-  // Function to fix the current corrupted game with e4, d5
-  const fixCurrentGame = async () => {
-    if (!game || !user) return
-
-    try {
-      console.log('🔧 Fixing current corrupted game...')
-
-      // Set the correct state: e4, d5 (white to move)
-      const correctFen = 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2'
-      const correctMoves = ['e4', 'd5']
-
-      const { error } = await supabase
-        .from('games')
-        .update({
-          game_state: correctFen,
-          moves: correctMoves,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', gameId)
-
-      if (error) {
-        console.error('❌ Failed to fix game state:', error)
-        alert('Failed to fix game state')
-        return
-      }
-
-      console.log('✅ Game state fixed successfully')
-      alert('Game fixed! Now shows e4, d5 - White to move')
-
-      // Refresh the game
-      fetchGame()
-    } catch (error) {
-      console.error('❌ Error fixing game state:', error)
-      alert('Failed to fix game state')
+          // Create new subscription
+          const newUnsubscribe = subscribeToGameUpdates()
+          subscriptionRef.current = newUnsubscribe
+        } catch (error) {
+          console.error('❌ Failed to retry subscription:', error)
+          setUsePolling(true)
+          startPolling()
+        }
+      }, retryDelay)
+    } else {
+      console.log('🔄 Max retries reached, falling back to polling')
+      setUsePolling(true)
+      startPolling()
     }
   }
 
@@ -252,8 +234,17 @@ export default function GamePage() {
     console.log('📡 Setting up real-time subscription for game:', gameId)
 
     try {
+      // Create a unique channel name with timestamp to avoid conflicts
+      const channelName = `game-${gameId}-${Date.now()}`
+
       const subscription = supabase
-        .channel(`game-${gameId}`)
+        .channel(channelName, {
+          config: {
+            presence: {
+              key: `user-${user?.id || 'anonymous'}`,
+            },
+          },
+        })
         .on(
           'postgres_changes',
           {
@@ -323,21 +314,34 @@ export default function GamePage() {
             }
           }
         )
-        .subscribe((status) => {
-          console.log('📡 Subscription status:', status)
+        .subscribe((status, err) => {
+          console.log('📡 Subscription status:', status, err ? `Error: ${err}` : '')
+
           if (status === 'SUBSCRIBED') {
             console.log('✅ Successfully subscribed to real-time updates')
+            // Reset any retry attempts
+            subscriptionRetryCount.current = 0
           } else if (status === 'CHANNEL_ERROR') {
-            console.error('❌ Real-time subscription error - falling back to polling')
-            // Start polling immediately on error
-            setUsePolling(true)
-            startPolling()
+            console.error('❌ Real-time subscription error - attempting retry or falling back to polling', err)
+            handleSubscriptionFailure('CHANNEL_ERROR')
           } else if (status === 'TIMED_OUT') {
-            console.error('❌ Real-time subscription timed out - falling back to polling')
-            setUsePolling(true)
-            startPolling()
+            console.error('❌ Real-time subscription timed out - attempting retry or falling back to polling')
+            handleSubscriptionFailure('TIMED_OUT')
           } else if (status === 'CLOSED') {
             console.log('📡 Real-time subscription closed')
+            // Only retry if this wasn't an intentional close
+            if (subscriptionRetryCount.current < 3) {
+              console.log('🔄 Attempting to reconnect real-time subscription...')
+              setTimeout(() => {
+                subscriptionRetryCount.current++
+                const newUnsubscribe = subscribeToGameUpdates()
+                subscriptionRef.current = newUnsubscribe
+              }, 2000 * subscriptionRetryCount.current) // Exponential backoff
+            } else {
+              console.log('🔄 Max retries reached, falling back to polling')
+              setUsePolling(true)
+              startPolling()
+            }
           }
         })
 
@@ -606,58 +610,7 @@ export default function GamePage() {
               }`}>
                 {game.status}
               </div>
-              {process.env.NODE_ENV === 'development' && (
-                <div className="mt-2 space-x-2">
-                  <button
-                    onClick={() => quickTurnTest(gameId)}
-                    className="text-xs bg-gray-200 px-2 py-1 rounded"
-                  >
-                    Debug Turn
-                  </button>
-                  <button
-                    onClick={() => fetchGame()}
-                    className="text-xs bg-blue-200 px-2 py-1 rounded"
-                  >
-                    Refresh
-                  </button>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="text-xs bg-red-200 px-2 py-1 rounded"
-                  >
-                    Hard Refresh
-                  </button>
-                  <button
-                    onClick={cleanupGameState}
-                    className="text-xs bg-yellow-200 px-2 py-1 rounded"
-                  >
-                    Reset Game
-                  </button>
-                  <button
-                    onClick={fixCurrentGame}
-                    className="text-xs bg-green-200 px-2 py-1 rounded"
-                  >
-                    Fix e4,d5
-                  </button>
-                  <button
-                    onClick={() => {
-                      // Test black move - Nc6
-                      const testMove = {
-                        san: 'Nc6',
-                        from: 'b8',
-                        to: 'c6',
-                        piece: 'n',
-                        after: 'r1bqkbnr/ppp1pppp/2n5/3p4/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
-                        fen: 'r1bqkbnr/ppp1pppp/2n5/3p4/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3'
-                      }
-                      console.log('🧪 Testing black move Nc6...')
-                      handleMove(testMove)
-                    }}
-                    className="text-xs bg-purple-200 px-2 py-1 rounded"
-                  >
-                    Test Nc6
-                  </button>
-                </div>
-              )}
+
             </div>
           </div>
         </div>
@@ -711,16 +664,8 @@ export default function GamePage() {
               </div>
             </div>
 
-            {/* Chat placeholder */}
-            <div className="bg-white rounded-lg shadow-md p-4">
-              <div className="flex items-center space-x-2 mb-3">
-                <MessageCircle className="h-5 w-5 text-gray-400" />
-                <span className="font-medium text-gray-900">Chat</span>
-              </div>
-              <div className="text-sm text-gray-500 text-center py-4">
-                Chat feature coming soon!
-              </div>
-            </div>
+            {/* Chat */}
+            <ChatBox gameId={gameId} className="h-96" />
           </div>
 
           {/* Chess Board */}
@@ -735,37 +680,12 @@ export default function GamePage() {
               moves={game.moves}
               isPlayerTurn={game.status === 'active' ? isPlayerTurn() : false}
             />
-            {/* Debug info */}
-            {process.env.NODE_ENV === 'development' && (
-              <div className="ml-4 p-4 bg-gray-100 rounded text-xs space-y-1">
-                <div className="font-bold">Game Debug Info:</div>
-                <div>Player Color: <span className="font-mono">{getPlayerColor()}</span></div>
-                <div>Game Status: <span className="font-mono">{game.status}</span></div>
-                <div>Current Turn: <span className="font-mono">{game.game_state.split(' ')[1]}</span> ({game.game_state.split(' ')[1] === 'w' ? 'White' : 'Black'})</div>
-                <div>Is Player Turn: <span className={`font-mono ${isPlayerTurn() ? 'text-green-600' : 'text-red-600'}`}>{isPlayerTurn().toString()}</span></div>
-                <div>Move Count: <span className="font-mono">{game.moves.length}</span></div>
-                <div>Last Move: <span className="font-mono">{game.moves[game.moves.length - 1] || 'None'}</span></div>
-                <div className="border-t pt-1">
-                  <div>White Player: <span className="font-mono text-xs">{game.white_player_id}</span></div>
-                  <div>Black Player: <span className="font-mono text-xs">{game.black_player_id || 'None'}</span></div>
-                  <div>Current User: <span className="font-mono text-xs">{user?.id}</span></div>
-                </div>
-                <div className={`mt-2 p-1 rounded ${usePolling ? 'bg-yellow-200' : 'bg-green-200'}`}>
-                  Sync: {usePolling ? 'Polling (2s)' : 'Real-time'}
-                </div>
-                <div className="text-xs text-gray-600">
-                  FEN: {game.game_state.substring(0, 30)}...
-                </div>
-              </div>
-            )}
+
           </div>
         </div>
       </div>
 
-      {/* Debug Component - only in development */}
-      {process.env.NODE_ENV === 'development' && (
-        <RealtimeDebugger gameId={gameId} />
-      )}
+
     </div>
   )
 }

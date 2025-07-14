@@ -8,9 +8,18 @@ const isSupabaseConfigured = supabaseUrl && supabaseAnonKey &&
   supabaseUrl !== 'your_supabase_project_url' &&
   supabaseAnonKey !== 'your_supabase_anon_key'
 
-// Client-side Supabase client
+// Client-side Supabase client with optimized real-time configuration
 export const supabase = isSupabaseConfigured
-  ? createBrowserClient(supabaseUrl!, supabaseAnonKey!)
+  ? createBrowserClient(supabaseUrl!, supabaseAnonKey!, {
+      realtime: {
+        params: {
+          eventsPerSecond: 10,
+        },
+        heartbeatIntervalMs: 30000,
+        reconnectAfterMs: (tries: number) => Math.min(tries * 1000, 30000),
+        timeout: 20000,
+      },
+    })
   : null
 
 // Database types

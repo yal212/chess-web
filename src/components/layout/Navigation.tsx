@@ -38,22 +38,13 @@ export default function Navigation() {
             </Link>
 
             {user && (
-              <>
-                <Link
-                  href="/play"
-                  className="flex items-center space-x-1 text-gray-700 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium"
-                >
-                  <Gamepad2 className="w-4 h-4" />
-                  <span>Play</span>
-                </Link>
-                <Link
-                  href="/profile"
-                  className="flex items-center space-x-1 text-gray-700 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium"
-                >
-                  <User className="w-4 h-4" />
-                  <span>Profile</span>
-                </Link>
-              </>
+              <Link
+                href="/play"
+                className="flex items-center space-x-1 text-gray-700 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium"
+              >
+                <Gamepad2 className="w-4 h-4" />
+                <span>Play</span>
+              </Link>
             )}
 
             <LoginButton />
