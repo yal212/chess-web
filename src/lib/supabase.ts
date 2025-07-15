@@ -40,6 +40,8 @@ export interface Game {
   moves: string[] // Array of moves in algebraic notation
   status: 'waiting' | 'active' | 'completed' | 'abandoned'
   winner?: 'white' | 'black' | 'draw'
+  result_reason?: 'checkmate' | 'resignation' | 'draw_agreement' | 'stalemate' | 'insufficient_material' | 'threefold_repetition' | 'fifty_move_rule' | 'timeout' | 'abandoned'
+  completed_at?: string
   created_at: string
   updated_at: string
 }
@@ -58,5 +60,13 @@ export interface ChatMessage {
   game_id: string
   user_id: string
   message: string
+  created_at: string
+}
+
+export interface PostGameAction {
+  id: string
+  game_id: string
+  player_id: string
+  action: 'play_again' | 'leave'
   created_at: string
 }

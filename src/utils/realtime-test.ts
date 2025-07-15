@@ -65,7 +65,7 @@ export class RealtimeTest {
       console.error('❌ Real-time subscription test failed:', error)
       return {
         success: false,
-        message: `Real-time subscription failed: ${error.message}`,
+        message: `Real-time subscription failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         details: error
       }
     }
@@ -120,7 +120,7 @@ export class RealtimeTest {
       console.error('❌ Database update test failed:', error)
       return {
         success: false,
-        message: `Database update test failed: ${error.message}`,
+        message: `Database update test failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         details: error
       }
     }
@@ -193,7 +193,7 @@ export class RealtimeTest {
       console.error('❌ Move sync test failed:', error)
       return {
         success: false,
-        message: `Move sync test failed: ${error.message}`,
+        message: `Move sync test failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         details: error
       }
     }

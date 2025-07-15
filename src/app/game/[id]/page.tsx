@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
+import { Chess } from 'chess.js'
 import Navigation from '@/components/layout/Navigation'
 import ChessBoard from '@/components/chess/ChessBoard'
 import ChatBox from '@/components/chess/ChatBox'
+import ConnectionStatus from '@/components/ui/ConnectionStatus'
 import { connectionManager } from '@/utils/realtime-connection-manager'
 import { ArrowLeft, Users, MessageCircle } from 'lucide-react'
 import Link from 'next/link'
@@ -37,6 +39,7 @@ export default function GamePage() {
   const [game, setGame] = useState<GameData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showMobileChat, setShowMobileChat] = useState(false)
 
   // Track when the current user is making a move to prevent sync conflicts
   const [isUserMakingMove, setIsUserMakingMove] = useState(false)
@@ -47,6 +50,7 @@ export default function GamePage() {
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const subscriptionRetryCount = useRef<number>(0)
   const [usePolling, setUsePolling] = useState(false)
+  const [gameCompletionHandled, setGameCompletionHandled] = useState(false)
 
   useEffect(() => {
     if (gameId && user) {
@@ -106,6 +110,11 @@ export default function GamePage() {
   }, [gameId, user])
 
   const fetchGame = async () => {
+    if (!supabase) {
+      setError('Database connection not available')
+      return
+    }
+
     try {
       const { data, error } = await supabase
         .from('games')
@@ -372,8 +381,8 @@ export default function GamePage() {
       return
     }
 
-    if (!game || !user) {
-      console.log('❌ Missing game or user:', { game: !!game, user: !!user })
+    if (!game || !user || !supabase) {
+      console.log('❌ Missing game, user, or supabase:', { game: !!game, user: !!user, supabase: !!supabase })
       return
     }
 
@@ -491,9 +500,44 @@ export default function GamePage() {
         console.log('✅ Move recorded successfully')
       }
 
+      // Check if the game is now completed after this move
+      console.log('🔍 Checking for game completion...')
+      const chessGame = new Chess(moveAfter)
+
+      if (chessGame.isGameOver()) {
+        let winner: 'white' | 'black' | 'draw' | undefined
+        let resultReason: string
+
+        if (chessGame.isCheckmate()) {
+          // The player who just moved wins (since it's the opponent who is in checkmate)
+          winner = chessGame.turn() === 'w' ? 'black' : 'white'
+          resultReason = 'checkmate'
+        } else if (chessGame.isStalemate()) {
+          winner = 'draw'
+          resultReason = 'stalemate'
+        } else if (chessGame.isInsufficientMaterial()) {
+          winner = 'draw'
+          resultReason = 'insufficient_material'
+        } else if (chessGame.isThreefoldRepetition()) {
+          winner = 'draw'
+          resultReason = 'threefold_repetition'
+        } else if (chessGame.isDraw()) {
+          winner = 'draw'
+          resultReason = 'fifty_move_rule'
+        } else {
+          winner = 'draw'
+          resultReason = 'draw_agreement'
+        }
+
+        console.log('🏁 Game completed!', { winner, resultReason })
+
+        // Update the game as completed
+        await handleGameCompletion(winner, resultReason)
+      }
+
     } catch (error) {
       console.error('❌ Error in handleMove:', error)
-      alert(`Failed to make move: ${error.message}`)
+      alert(`Failed to make move: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       // Clear the user making move flag after a delay to allow for sync
       userMoveTimeoutRef.current = setTimeout(() => {
@@ -503,7 +547,110 @@ export default function GamePage() {
     }
   }
 
-  const getPlayerColor = (): 'white' | 'black' => {
+  // Handle game completion - update database with result
+  const handleGameCompletion = async (winner: 'white' | 'black' | 'draw', resultReason: string) => {
+    if (!game || !user || !supabase) return
+
+    try {
+      console.log('🏁 Handling game completion:', { winner, resultReason })
+
+      const { error } = await supabase
+        .from('games')
+        .update({
+          status: 'completed',
+          winner,
+          result_reason: resultReason,
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', gameId)
+
+      if (error) {
+        console.error('❌ Error updating game completion:', error)
+        throw error
+      }
+
+      console.log('✅ Game completion updated successfully')
+    } catch (error) {
+      console.error('❌ Error in handleGameCompletion:', error)
+    }
+  }
+
+  // Handle play again action
+  const handlePlayAgain = (newGameId: string) => {
+    console.log('🔄 Navigating to new game:', newGameId)
+    window.location.href = `/game/${newGameId}`
+  }
+
+  // Handle leave game action
+  const handleLeaveGame = () => {
+    console.log('👋 Leaving game, navigating to play page')
+    window.location.href = '/play'
+  }
+
+  // Handle resignation
+  const handleResignation = async () => {
+    if (!game || !user) return
+
+    const confirmed = window.confirm('Are you sure you want to resign? This will end the game.')
+    if (!confirmed) return
+
+    try {
+      console.log('🏳️ Player resigning...')
+
+      // Determine winner (opponent of the resigning player)
+      const resigningPlayer = game.white_player_id === user.id ? 'white' : 'black'
+      const winner = resigningPlayer === 'white' ? 'black' : 'white'
+
+      await handleGameCompletion(winner, 'resignation')
+
+      console.log('✅ Resignation processed successfully')
+    } catch (error) {
+      console.error('❌ Error processing resignation:', error)
+      alert(`Failed to resign: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // Watch for game completion and update database
+  useEffect(() => {
+    if (!game || !user || !supabase || gameCompletionHandled) return
+
+    // Check if the game should be marked as completed based on the current game state
+    // This will be triggered when the ChessBoard component detects game over
+    const checkGameCompletion = async () => {
+      if (!supabase) return
+
+      try {
+        // Get the current game state from the database to check if it's already completed
+        const { data: currentGame, error } = await supabase
+          .from('games')
+          .select('status, winner, result_reason')
+          .eq('id', gameId)
+          .single()
+
+        if (error) {
+          console.error('Error checking game status:', error)
+          return
+        }
+
+        // If the game is already marked as completed in the database, don't process again
+        if (currentGame.status === 'completed') {
+          setGameCompletionHandled(true)
+          return
+        }
+
+        // For now, we'll rely on the ChessBoard component to detect completion
+        // and the user to trigger resignation. The database update will happen
+        // when moves are made or resignation occurs.
+      } catch (error) {
+        console.error('Error in checkGameCompletion:', error)
+      }
+    }
+
+    checkGameCompletion()
+  }, [game, user, gameId, gameCompletionHandled])
+
+  const playerColor = useMemo((): 'white' | 'black' => {
     if (!game || !user) return 'white'
 
     // Fix: Explicitly check if user is black player first
@@ -518,16 +665,17 @@ export default function GamePage() {
       console.log('🎯 Player identified as spectator, defaulting to WHITE view')
       return 'white'
     }
-  }
+  }, [game, user])
 
-  const isPlayerTurn = (): boolean => {
+  // Removed unused getPlayerColor function
+
+  const isPlayerTurn = useCallback((): boolean => {
     if (!game || !user) return false
 
     // Parse FEN to get current turn
     const fenParts = game.game_state.split(' ')
     const currentTurn = fenParts[1] // 'w' for white, 'b' for black
 
-    const playerColor = getPlayerColor()
     const isMyTurn = (currentTurn === 'w' && playerColor === 'white') ||
                      (currentTurn === 'b' && playerColor === 'black')
 
@@ -542,16 +690,59 @@ export default function GamePage() {
     })
 
     return isMyTurn
-  }
+  }, [game, user, playerColor])
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Navigation />
         <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading game...</p>
+          {/* Header Skeleton */}
+          <div className="mb-8 animate-pulse">
+            <div className="flex items-center space-x-4 mb-4">
+              <div className="w-8 h-8 bg-gray-300 rounded"></div>
+              <div className="h-6 bg-gray-300 rounded w-32"></div>
+            </div>
+            <div className="h-8 bg-gray-300 rounded w-48"></div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            {/* Players Info Skeleton */}
+            <div className="lg:col-span-1 space-y-4">
+              {[1, 2].map((i) => (
+                <div key={i} className="bg-white rounded-lg shadow-md p-4 animate-pulse">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-gray-300 rounded-full"></div>
+                    <div className="space-y-2">
+                      <div className="h-4 bg-gray-300 rounded w-24"></div>
+                      <div className="h-3 bg-gray-300 rounded w-16"></div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {/* Chat Skeleton */}
+              <div className="bg-white rounded-lg shadow-md h-96 animate-pulse">
+                <div className="p-4 border-b border-gray-200">
+                  <div className="h-5 bg-gray-300 rounded w-16"></div>
+                </div>
+                <div className="p-4 space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex space-x-3">
+                      <div className="w-8 h-8 bg-gray-300 rounded-full"></div>
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3 bg-gray-300 rounded w-1/4"></div>
+                        <div className="h-4 bg-gray-300 rounded w-3/4"></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Chess Board Skeleton */}
+            <div className="lg:col-span-3 flex justify-center">
+              <div className="w-96 h-96 bg-gray-300 rounded-lg animate-pulse"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -601,23 +792,80 @@ export default function GamePage() {
               </h1>
             </div>
             
-            <div className="text-right">
-              <div className="text-sm text-gray-500">Game Status</div>
-              <div className={`text-lg font-semibold capitalize ${
-                game.status === 'active' ? 'text-green-600' :
-                game.status === 'waiting' ? 'text-yellow-600' :
-                'text-gray-600'
-              }`}>
-                {game.status}
+            <div className="text-right space-y-2">
+              <div>
+                <div className="text-sm text-gray-500">Game Status</div>
+                <div className={`text-lg font-semibold capitalize ${
+                  game.status === 'active' ? 'text-green-600' :
+                  game.status === 'waiting' ? 'text-yellow-600' :
+                  'text-gray-600'
+                }`}>
+                  {game.status}
+                </div>
               </div>
 
+              <div>
+                <div className="text-sm text-gray-500 mb-1">Connection</div>
+                <ConnectionStatus />
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          {/* Players Info */}
-          <div className="lg:col-span-1 space-y-4">
+        {/* Mobile Players Info - Horizontal layout */}
+        <div className="lg:hidden mb-4">
+          <div className="bg-white rounded-lg shadow-md p-4">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center space-x-3">
+                {game.white_player.avatar_url ? (
+                  <img
+                    src={game.white_player.avatar_url}
+                    alt={game.white_player.display_name}
+                    className="w-8 h-8 rounded-full"
+                  />
+                ) : (
+                  <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
+                    <Users className="w-4 h-4 text-gray-600" />
+                  </div>
+                )}
+                <div>
+                  <div className="font-medium text-gray-900 text-sm">
+                    {game.white_player.display_name}
+                  </div>
+                  <div className="text-xs text-gray-500">White</div>
+                </div>
+              </div>
+
+              <div className="text-center">
+                <div className="text-sm font-medium text-gray-900">VS</div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                {game.black_player?.avatar_url ? (
+                  <img
+                    src={game.black_player.avatar_url}
+                    alt={game.black_player.display_name}
+                    className="w-8 h-8 rounded-full"
+                  />
+                ) : (
+                  <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
+                    <Users className="w-4 h-4 text-gray-600" />
+                  </div>
+                )}
+                <div>
+                  <div className="font-medium text-gray-900 text-sm">
+                    {game.black_player?.display_name || 'Waiting...'}
+                  </div>
+                  <div className="text-xs text-gray-500">Black</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 lg:gap-8">
+          {/* Desktop Players Info */}
+          <div className="hidden lg:block lg:col-span-1 space-y-4 order-2 lg:order-1">
             {/* White Player */}
             <div className="bg-white rounded-lg shadow-md p-4">
               <div className="flex items-center space-x-3">
@@ -664,23 +912,46 @@ export default function GamePage() {
               </div>
             </div>
 
-            {/* Chat */}
-            <ChatBox gameId={gameId} className="h-96" />
+            {/* Chat - Hidden on mobile, shown on desktop */}
+            <div className="hidden lg:block">
+              <ChatBox gameId={gameId} className="h-96" />
+            </div>
           </div>
 
           {/* Chess Board */}
-          <div className="lg:col-span-3 flex justify-center">
+          <div className="lg:col-span-3 flex flex-col items-center order-1 lg:order-2">
             <ChessBoard
               gameId={gameId}
-              playerColor={getPlayerColor()}
+              playerColor={playerColor}
               isSpectator={game.status === 'completed' || game.status === 'abandoned'}
               onMove={handleMove}
               initialFen={game.game_state}
               currentFen={game.game_state}
               moves={game.moves}
               isPlayerTurn={game.status === 'active' ? isPlayerTurn() : false}
+              whitePlayerName={game.white_player?.display_name || 'White'}
+              blackPlayerName={game.black_player?.display_name || 'Black'}
+              onPlayAgain={handlePlayAgain}
+              onLeave={handleLeaveGame}
+              onResign={handleResignation}
             />
 
+            {/* Mobile Chat Toggle */}
+            <div className="lg:hidden mt-4 w-full max-w-md">
+              <button
+                onClick={() => setShowMobileChat(!showMobileChat)}
+                className="w-full flex items-center justify-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span>{showMobileChat ? 'Hide Chat' : 'Show Chat'}</span>
+              </button>
+
+              {showMobileChat && (
+                <div className="mt-4 animate-in slide-in-from-bottom-4 duration-300">
+                  <ChatBox gameId={gameId} className="h-80" />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

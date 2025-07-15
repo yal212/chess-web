@@ -5,6 +5,7 @@ import { Square, Chess } from 'chess.js'
 import { useChessGame } from '@/hooks/useChessGame'
 import { Crown, RotateCcw, Flag } from 'lucide-react'
 import { useMemo, useEffect, useRef } from 'react'
+import PostGameActionsSimple from './PostGameActionsSimple'
 
 interface ChessBoardProps {
   gameId?: string
@@ -15,6 +16,11 @@ interface ChessBoardProps {
   currentFen?: string // Current FEN from database
   moves?: string[] // Move history from database
   isPlayerTurn?: boolean // Whether it's the current player's turn
+  whitePlayerName?: string
+  blackPlayerName?: string
+  onPlayAgain?: (newGameId: string) => void
+  onLeave?: () => void
+  onResign?: () => void
 }
 
 export default function ChessBoard({
@@ -25,7 +31,12 @@ export default function ChessBoard({
   initialFen,
   currentFen: externalFen,
   moves: externalMoves,
-  isPlayerTurn = true
+  isPlayerTurn = true,
+  whitePlayerName = 'White',
+  blackPlayerName = 'Black',
+  onPlayAgain,
+  onLeave,
+  onResign
 }: ChessBoardProps) {
   const {
     gameState,
@@ -572,24 +583,37 @@ export default function ChessBoard({
         {/* Game Over Overlay */}
         {isGameOver && (
           <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center rounded-xl backdrop-blur-sm">
-            <div className="bg-white p-8 rounded-xl text-center shadow-2xl border border-gray-200 max-w-sm mx-4">
-              <div className="mb-4">
-                <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Crown className="h-8 w-8 text-yellow-600" />
+            {gameId && !isSpectator ? (
+              <PostGameActionsSimple
+                gameId={gameId}
+                winner={gameState.winner}
+                resultReason={gameState.resultReason}
+                playerColor={playerColor}
+                whitePlayerName={whitePlayerName}
+                blackPlayerName={blackPlayerName}
+                onPlayAgain={onPlayAgain}
+                onLeave={onLeave}
+              />
+            ) : (
+              <div className="bg-white p-8 rounded-xl text-center shadow-2xl border border-gray-200 max-w-sm mx-4">
+                <div className="mb-4">
+                  <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Crown className="h-8 w-8 text-yellow-600" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2">Game Over</h3>
+                  <p className="text-gray-600 text-lg">{getGameStatusMessage()}</p>
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Game Over</h3>
-                <p className="text-gray-600 text-lg">{getGameStatusMessage()}</p>
+                {!isSpectator && (
+                  <button
+                    onClick={resetGame}
+                    className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 font-semibold"
+                  >
+                    <RotateCcw className="h-5 w-5 mr-2" />
+                    New Game
+                  </button>
+                )}
               </div>
-              {!isSpectator && (
-                <button
-                  onClick={resetGame}
-                  className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 font-semibold"
-                >
-                  <RotateCcw className="h-5 w-5 mr-2" />
-                  New Game
-                </button>
-              )}
-            </div>
+            )}
           </div>
         )}
       </div>
@@ -609,6 +633,10 @@ export default function ChessBoard({
             onClick={() => {
               if (window.confirm('Are you sure you want to resign? This will end the game.')) {
                 resignGame()
+                // Also call the external resign handler if provided
+                if (onResign) {
+                  onResign()
+                }
               }
             }}
             className="flex-1 inline-flex items-center justify-center px-4 py-3 border border-red-300 text-sm font-semibold rounded-lg text-red-700 bg-white hover:bg-red-50 transition-colors duration-200 shadow-sm"

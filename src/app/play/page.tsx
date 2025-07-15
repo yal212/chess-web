@@ -5,7 +5,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import Navigation from '@/components/layout/Navigation'
 import ChessBoard from '@/components/chess/ChessBoard'
-import { Plus, Users, Clock, Trophy, Trash2, AlertTriangle } from 'lucide-react'
+import GameCleanupPanel from '@/components/admin/GameCleanupPanel'
+import { Plus, Users, Clock, Trophy, Trash2, AlertTriangle, Settings } from 'lucide-react'
 import Link from 'next/link'
 
 interface Game {
@@ -32,6 +33,7 @@ export default function PlayPage() {
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [joiningGameId, setJoiningGameId] = useState<string | null>(null)
+  const [showCleanupPanel, setShowCleanupPanel] = useState(false)
   const [deletingGameId, setDeletingGameId] = useState<string | null>(null)
 
   // Time limit for waiting games (30 minutes)
@@ -91,12 +93,14 @@ export default function PlayPage() {
 
     // Cleanup subscriptions on unmount
     return () => {
-      supabase.removeAllChannels()
+      if (supabase) {
+        supabase.removeAllChannels()
+      }
     }
   }, [user])
 
   const setupRealtimeSubscriptions = () => {
-    if (!user) return
+    if (!user || !supabase) return
 
     // Subscribe to games table changes
     const gamesSubscription = supabase
@@ -158,7 +162,7 @@ export default function PlayPage() {
   }
 
   const fetchGames = async () => {
-    if (!user) return
+    if (!user || !supabase) return
 
     try {
       // Fetch user's games (games they're part of)
@@ -202,6 +206,12 @@ export default function PlayPage() {
     if (!user) {
       console.error('No user found when trying to create game')
       alert('You must be signed in to create a game. Please sign in first.')
+      return
+    }
+
+    if (!supabase) {
+      console.error('Supabase client not available')
+      alert('Database connection not available. Please try again.')
       return
     }
 
@@ -276,7 +286,7 @@ export default function PlayPage() {
   }
 
   const joinGame = async (gameId: string) => {
-    if (!user) return
+    if (!user || !supabase) return
 
     // Find the game to show confirmation dialog
     const game = availableGames.find(g => g.id === gameId)
@@ -392,6 +402,11 @@ export default function PlayPage() {
       return
     }
 
+    if (!supabase) {
+      alert('Database connection not available.')
+      return
+    }
+
     // Find the game to show confirmation dialog
     const game = userGames.find(g => g.id === gameId)
     if (!game) {
@@ -453,39 +468,78 @@ export default function PlayPage() {
     }
   }
 
-  const cleanupStaleGames = async () => {
-    if (!user) return
+  const cleanupStaleGames = async (showAlert: boolean = false) => {
+    if (!user || !supabase) return
 
     try {
-      // Calculate the cutoff time (30 minutes ago)
-      const cutoffTime = new Date()
-      cutoffTime.setMinutes(cutoffTime.getMinutes() - WAITING_GAME_TIMEOUT_MINUTES)
-      const cutoffISOString = cutoffTime.toISOString()
+      let totalCleaned = 0
+      const results: string[] = []
 
-      console.log(`Cleaning up games older than: ${cutoffISOString}`)
+      // Calculate the cutoff time (30 minutes ago for waiting games)
+      const waitingCutoffTime = new Date()
+      waitingCutoffTime.setMinutes(waitingCutoffTime.getMinutes() - WAITING_GAME_TIMEOUT_MINUTES)
+      const waitingCutoffISOString = waitingCutoffTime.toISOString()
 
-      // Use a single database query to mark all stale waiting games as abandoned
-      const { data, error } = await supabase
+      console.log(`Cleaning up waiting games older than: ${waitingCutoffISOString}`)
+
+      // Mark stale waiting games as abandoned
+      const { data: abandonedGames, error: abandonError } = await supabase
         .from('games')
         .update({ status: 'abandoned' })
         .eq('status', 'waiting')
-        .lt('created_at', cutoffISOString)
+        .lt('created_at', waitingCutoffISOString)
         .select('id')
 
-      if (error) {
-        console.error('Error cleaning up stale games:', error)
-        return
+      if (abandonError) {
+        console.error('Error marking stale games as abandoned:', abandonError)
+        results.push(`❌ Error marking waiting games as abandoned: ${abandonError.message}`)
+      } else {
+        const abandonedCount = abandonedGames?.length || 0
+        totalCleaned += abandonedCount
+        if (abandonedCount > 0) {
+          console.log(`Marked ${abandonedCount} stale waiting games as abandoned:`, abandonedGames?.map(g => g.id))
+        }
+        results.push(`✅ Marked ${abandonedCount} stale waiting games as abandoned`)
       }
 
-      if (data && data.length > 0) {
-        console.log(`Marked ${data.length} stale games as abandoned:`, data.map(g => g.id))
-        // Refresh games list to reflect changes
-        fetchGames()
+      // Calculate cutoff time for old completed games (7 days ago)
+      const completedCutoffTime = new Date()
+      completedCutoffTime.setDate(completedCutoffTime.getDate() - 7)
+      const completedCutoffISOString = completedCutoffTime.toISOString()
+
+      console.log(`Cleaning up completed games older than: ${completedCutoffISOString}`)
+
+      // Delete old completed games where both players have left or no post-game actions exist
+      const { data: deletedGames, error: deleteError } = await supabase
+        .rpc('cleanup_old_completed_games', { days_old: 7 })
+
+      if (deleteError) {
+        console.error('Error cleaning up old completed games:', deleteError)
+        results.push(`❌ Error cleaning up old completed games: ${deleteError.message}`)
       } else {
-        console.log('No stale games found to cleanup')
+        const deletedCount = deletedGames || 0
+        totalCleaned += deletedCount
+        console.log(`Deleted ${deletedCount} old completed games`)
+        results.push(`✅ Deleted ${deletedCount} old completed games (7+ days)`)
       }
+
+      // Refresh games list to reflect changes
+      fetchGames()
+
+      console.log(`Total games cleaned up: ${totalCleaned}`)
+
+      if (showAlert) {
+        const message = `Cleanup completed!\n\nTotal items cleaned: ${totalCleaned}\n\n${results.join('\n')}`
+        alert(message)
+      }
+
+      return { totalCleaned, results }
     } catch (error) {
-      console.error('Error cleaning up stale games:', error)
+      console.error('Error cleaning up games:', error)
+      if (showAlert) {
+        alert(`Cleanup failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      }
+      return { totalCleaned: 0, results: [`❌ Cleanup failed: ${error instanceof Error ? error.message : 'Unknown error'}`] }
     }
   }
 
@@ -548,29 +602,35 @@ export default function PlayPage() {
                 🔄 Refresh Games
               </button>
 
-              {process.env.NODE_ENV === 'development' && (
-                <button
-                  onClick={async () => {
-                    console.log('Manually cleaning up stale games...')
-                    await cleanupStaleGames()
-                    alert('Stale game cleanup completed! Check console for details.')
-                  }}
-                  className="w-full inline-flex items-center justify-center px-3 py-2 border border-orange-300 text-sm font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 mb-4"
-                >
-                  🧹 Cleanup Stale Games
-                </button>
-              )}
+              <button
+                onClick={async () => {
+                  console.log('Manually cleaning up stale games...')
+                  await cleanupStaleGames(true)
+                }}
+                className="w-full inline-flex items-center justify-center px-3 py-2 border border-orange-300 text-sm font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 mb-2"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Quick Cleanup
+              </button>
+
+              <button
+                onClick={() => setShowCleanupPanel(!showCleanupPanel)}
+                className="w-full inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 mb-4"
+              >
+                <Settings className="h-4 w-4 mr-2" />
+                {showCleanupPanel ? 'Hide' : 'Show'} Cleanup Panel
+              </button>
 
               <div className="border-t pt-4">
                 <h3 className="text-sm font-medium text-gray-900 mb-2">Game Statistics</h3>
                 <div className="space-y-2 text-sm text-gray-600">
                   <div className="flex items-center">
                     <Trophy className="h-4 w-4 mr-2" />
-                    <span>Games Played: {user.games_played || 0}</span>
+                    <span>Games Played: {(user as any).games_played || 0}</span>
                   </div>
                   <div className="flex items-center">
                     <Users className="h-4 w-4 mr-2" />
-                    <span>Rating: {user.rating || 1200}</span>
+                    <span>Rating: {(user as any).rating || 1200}</span>
                   </div>
                 </div>
               </div>
@@ -754,6 +814,13 @@ export default function PlayPage() {
             </div>
           </div>
         </div>
+
+        {/* Cleanup Panel */}
+        {showCleanupPanel && (
+          <div className="mt-8">
+            <GameCleanupPanel />
+          </div>
+        )}
       </div>
     </div>
   )

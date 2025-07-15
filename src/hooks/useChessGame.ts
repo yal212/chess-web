@@ -10,6 +10,7 @@ export interface ChessGameState {
   isPlayerTurn: boolean
   gameStatus: 'waiting' | 'active' | 'completed' | 'abandoned'
   winner?: 'white' | 'black' | 'draw'
+  resultReason?: 'checkmate' | 'resignation' | 'draw_agreement' | 'stalemate' | 'insufficient_material' | 'threefold_repetition' | 'fifty_move_rule' | 'timeout' | 'abandoned'
   moveHistory: string[]
   resignedBy?: 'white' | 'black'
 }
@@ -252,6 +253,7 @@ export function useChessGame(initialFen?: string) {
       moveHistory: [],
       gameStatus: 'active', // Set to active for demo mode
       winner: undefined,
+      resultReason: undefined,
       resignedBy: undefined,
       isPlayerTurn: true
     }))
@@ -269,6 +271,7 @@ export function useChessGame(initialFen?: string) {
       ...prev,
       gameStatus: 'completed',
       winner,
+      resultReason: 'resignation',
       resignedBy: currentPlayer,
       isPlayerTurn: false
     }))
@@ -331,29 +334,65 @@ export function useChessGame(initialFen?: string) {
     })
   }, [gameState.game])
 
+  // Helper function to determine result reason
+  const getResultReason = useCallback((game: Chess, resignedBy?: 'white' | 'black'): ChessGameState['resultReason'] => {
+    if (resignedBy) {
+      return 'resignation'
+    }
+
+    if (game.isCheckmate()) {
+      return 'checkmate'
+    }
+
+    if (game.isStalemate()) {
+      return 'stalemate'
+    }
+
+    if (game.isInsufficientMaterial()) {
+      return 'insufficient_material'
+    }
+
+    if (game.isThreefoldRepetition()) {
+      return 'threefold_repetition'
+    }
+
+    if (game.isDraw()) {
+      // This covers other draw conditions like 50-move rule
+      return 'fifty_move_rule'
+    }
+
+    return undefined
+  }, [])
+
   // Check game status
   useEffect(() => {
     const game = gameState.game
     let status: ChessGameState['gameStatus'] = 'active'
     let winner: ChessGameState['winner'] = undefined
+    let resultReason: ChessGameState['resultReason'] = undefined
 
-    if (game.isGameOver()) {
+    if (game.isGameOver() || gameState.resignedBy) {
       status = 'completed'
-      if (game.isCheckmate()) {
+      resultReason = getResultReason(game, gameState.resignedBy)
+
+      if (gameState.resignedBy) {
+        winner = gameState.resignedBy === 'white' ? 'black' : 'white'
+      } else if (game.isCheckmate()) {
         winner = game.turn() === 'w' ? 'black' : 'white'
       } else if (game.isDraw()) {
         winner = 'draw'
       }
     }
 
-    if (status !== gameState.gameStatus || winner !== gameState.winner) {
+    if (status !== gameState.gameStatus || winner !== gameState.winner || resultReason !== gameState.resultReason) {
       setGameState(prev => ({
         ...prev,
         gameStatus: status,
-        winner
+        winner,
+        resultReason
       }))
     }
-  }, [gameState.game, gameState.gameStatus, gameState.winner])
+  }, [gameState.game, gameState.gameStatus, gameState.winner, gameState.resultReason, gameState.resignedBy, getResultReason])
 
   const currentFen = gameState.game.fen()
 

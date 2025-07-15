@@ -62,7 +62,7 @@ export default function RealtimeDebugger({ gameId }: RealtimeDebuggerProps) {
       console.error('Test execution failed:', error)
       setTestResults([{
         success: false,
-        message: `Test execution failed: ${error.message}`,
+        message: `Test execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         details: error
       }])
     } finally {

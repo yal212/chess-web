@@ -86,11 +86,12 @@ export default function TestSyncPage() {
       // Test 1: Supabase Connection
       updateTestResult(0, 'running')
       try {
+        if (!supabase) throw new Error('Supabase client not available')
         const { data, error } = await supabase.from('games').select('count').limit(1)
         if (error) throw error
         updateTestResult(0, 'success', 'Successfully connected to Supabase')
       } catch (error) {
-        updateTestResult(0, 'error', `Connection failed: ${error.message}`)
+        updateTestResult(0, 'error', `Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
         return
       }
 
@@ -104,7 +105,7 @@ export default function TestSyncPage() {
           updateTestResult(1, 'error', 'Real-time configuration has issues')
         }
       } catch (error) {
-        updateTestResult(1, 'error', `Config check failed: ${error.message}`)
+        updateTestResult(1, 'error', `Config check failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
 
       // Test 3: Real-time Subscription
@@ -117,7 +118,7 @@ export default function TestSyncPage() {
           updateTestResult(2, 'error', 'Real-time subscription is not working')
         }
       } catch (error) {
-        updateTestResult(2, 'error', `Subscription test failed: ${error.message}`)
+        updateTestResult(2, 'error', `Subscription test failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
 
       // Test 4: Move Synchronization (only if a game is selected)
@@ -131,7 +132,7 @@ export default function TestSyncPage() {
             updateTestResult(3, 'error', 'Move synchronization is not working')
           }
         } catch (error) {
-          updateTestResult(3, 'error', `Move sync test failed: ${error.message}`)
+          updateTestResult(3, 'error', `Move sync test failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
         }
       } else {
         updateTestResult(3, 'error', 'No game selected for move sync test')
@@ -163,7 +164,7 @@ export default function TestSyncPage() {
       fetchAvailableGames()
     } catch (error) {
       console.error('Error creating test game:', error)
-      alert(`Failed to create test game: ${error.message}`)
+      alert(`Failed to create test game: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 

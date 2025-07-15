@@ -13,9 +13,11 @@ CREATE TABLE IF NOT EXISTS games (
   moves TEXT[] DEFAULT '{}',
   status TEXT DEFAULT 'waiting' CHECK (status IN ('waiting', 'active', 'completed', 'abandoned')),
   winner TEXT CHECK (winner IN ('white', 'black', 'draw')),
+  result_reason TEXT CHECK (result_reason IN ('checkmate', 'resignation', 'draw_agreement', 'stalemate', 'insufficient_material', 'threefold_repetition', 'fifty_move_rule', 'timeout', 'abandoned')),
   time_control INTEGER DEFAULT 600, -- 10 minutes in seconds
   white_time_left INTEGER DEFAULT 600,
   black_time_left INTEGER DEFAULT 600,
+  completed_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -40,6 +42,16 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Create post_game_actions table to track player actions after game completion
+CREATE TABLE IF NOT EXISTS post_game_actions (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  game_id UUID REFERENCES games(id) ON DELETE CASCADE NOT NULL,
+  player_id UUID REFERENCES users(id) NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('play_again', 'leave')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(game_id, player_id) -- Each player can only have one action per game
+);
+
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -56,6 +68,7 @@ CREATE TRIGGER update_games_updated_at BEFORE UPDATE ON games FOR EACH ROW EXECU
 ALTER TABLE games ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_moves ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE post_game_actions ENABLE ROW LEVEL SECURITY;
 
 -- Games policies
 CREATE POLICY "Users can view games they're part of" ON games FOR SELECT USING (
@@ -108,12 +121,43 @@ CREATE POLICY "Players can send chat in their games" ON chat_messages FOR INSERT
   )
 );
 
+-- Post-game actions policies
+CREATE POLICY "Users can view post-game actions from their games" ON post_game_actions FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM games
+    WHERE games.id = post_game_actions.game_id
+    AND (games.white_player_id = auth.uid() OR games.black_player_id = auth.uid())
+  )
+);
+
+CREATE POLICY "Users can insert their own post-game actions" ON post_game_actions FOR INSERT WITH CHECK (
+  auth.uid() = player_id AND
+  EXISTS (
+    SELECT 1 FROM games
+    WHERE games.id = post_game_actions.game_id
+    AND (games.white_player_id = auth.uid() OR games.black_player_id = auth.uid())
+    AND games.status = 'completed'
+  )
+);
+
+CREATE POLICY "Users can update their own post-game actions" ON post_game_actions FOR UPDATE USING (
+  auth.uid() = player_id AND
+  EXISTS (
+    SELECT 1 FROM games
+    WHERE games.id = post_game_actions.game_id
+    AND (games.white_player_id = auth.uid() OR games.black_player_id = auth.uid())
+  )
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_games_white_player ON games(white_player_id);
 CREATE INDEX IF NOT EXISTS idx_games_black_player ON games(black_player_id);
 CREATE INDEX IF NOT EXISTS idx_games_status ON games(status);
+CREATE INDEX IF NOT EXISTS idx_games_completed_at ON games(completed_at);
 CREATE INDEX IF NOT EXISTS idx_game_moves_game_id ON game_moves(game_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_game_id ON chat_messages(game_id);
+CREATE INDEX IF NOT EXISTS idx_post_game_actions_game_id ON post_game_actions(game_id);
+CREATE INDEX IF NOT EXISTS idx_post_game_actions_player_id ON post_game_actions(player_id);
 
 -- Verify the setup
 SELECT 'Games table created successfully' as status;
