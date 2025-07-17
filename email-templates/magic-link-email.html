@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Chess Web Magic Link</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #374151;
+            background-color: #f9fafb;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+            padding: 40px 30px;
+            text-align: center;
+        }
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .crown-icon {
+            width: 40px;
+            height: 40px;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+        .brand-name {
+            font-size: 28px;
+            font-weight: bold;
+            color: white;
+            margin: 0;
+        }
+        .header-subtitle {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 18px;
+            margin: 10px 0 0 0;
+        }
+        .content {
+            padding: 40px 30px;
+        }
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #1f2937;
+            margin: 0 0 20px 0;
+            text-align: center;
+        }
+        .message {
+            font-size: 16px;
+            color: #4b5563;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+            color: white;
+            text-decoration: none;
+            padding: 16px 32px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            text-align: center;
+            margin: 20px 0;
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+        }
+        .cta-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        .magic-info {
+            background-color: #f0f9ff;
+            border: 1px solid #0ea5e9;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 30px 0;
+        }
+        .magic-info-title {
+            font-weight: 600;
+            color: #0c4a6e;
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .magic-info-text {
+            font-size: 14px;
+            color: #0c4a6e;
+            margin: 0;
+        }
+        .security-note {
+            background-color: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 6px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+        .security-note-title {
+            font-weight: 600;
+            color: #92400e;
+            margin: 0 0 8px 0;
+            font-size: 14px;
+        }
+        .security-note-text {
+            font-size: 13px;
+            color: #92400e;
+            margin: 0;
+        }
+        .footer {
+            background-color: #f9fafb;
+            padding: 30px;
+            text-align: center;
+            border-top: 1px solid #e5e7eb;
+        }
+        .footer-text {
+            font-size: 14px;
+            color: #6b7280;
+            margin: 0 0 10px 0;
+        }
+        .footer-link {
+            color: #3b82f6;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <div class="crown-icon">♔</div>
+                <h1 class="brand-name">Chess Web</h1>
+            </div>
+            <p class="header-subtitle">Magic Link Sign In</p>
+        </div>
+        
+        <div class="content">
+            <h2 class="title">Your Magic Link is Ready! ✨</h2>
+            
+            <p class="message">
+                Click the button below to instantly sign in to your Chess Web account. No password required!
+            </p>
+            
+            <div class="cta-container">
+                <a href="{{ .ConfirmationURL }}" class="cta-button">
+                    🚀 Sign In to Chess Web
+                </a>
+            </div>
+            
+            <div class="magic-info">
+                <h3 class="magic-info-title">
+                    ✨ About Magic Links
+                </h3>
+                <p class="magic-info-text">
+                    Magic links provide a secure, password-free way to access your account. Simply click the button above and you'll be automatically signed in to Chess Web. This link is unique to you and can only be used once.
+                </p>
+            </div>
+            
+            <div class="security-note">
+                <p class="security-note-title">🔒 Security Information</p>
+                <p class="security-note-text">
+                    This magic link will expire in 1 hour and can only be used once. If you didn't request this sign-in link, you can safely ignore this email.
+                </p>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p class="footer-text">
+                Having trouble? Contact us at <a href="mailto:support@chessweb.com" class="footer-link">support@chessweb.com</a>
+            </p>
+            <p class="footer-text">
+                Chess Web - Seamless Gaming Experience
+            </p>
+        </div>
+    </div>
+</body>
+</html>

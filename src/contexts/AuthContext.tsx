@@ -10,6 +10,9 @@ interface AuthContextType {
   supabaseUser: SupabaseUser | null
   loading: boolean
   signInWithGoogle: () => Promise<void>
+  signInWithEmail: (email: string, password: string) => Promise<void>
+  signUpWithEmail: (email: string, password: string, displayName: string) => Promise<void>
+  resetPassword: (email: string) => Promise<void>
   signOut: () => Promise<void>
   updateUserProfile: (updates: Partial<Pick<User, 'display_name' | 'avatar_url'>>) => Promise<void>
 }
@@ -325,9 +328,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Get the correct redirect URL based on environment
-      const redirectUrl = process.env.NODE_ENV === 'production'
-        ? 'https://custom-chess-web.vercel.app/auth/callback'
-        : `${window.location.origin}/auth/callback`
+      // Always use the current origin to avoid hardcoded URLs
+      const redirectUrl = `${window.location.origin}/auth/callback`
+
+      console.log('Attempting Google OAuth with redirect URL:', redirectUrl)
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -338,6 +342,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (error) throw error
     } catch (error) {
       console.error('Error signing in with Google:', error)
+      throw error
+    }
+  }
+
+  const signInWithEmail = async (email: string, password: string) => {
+    try {
+      // Check if Supabase is properly configured
+      if (!supabase) {
+        throw new Error('Please configure Supabase environment variables. See README.md for setup instructions.')
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      })
+
+      if (error) {
+        console.error('Error signing in with email:', error)
+        throw error
+      }
+    } catch (error) {
+      console.error('Error signing in with email:', error)
+      throw error
+    }
+  }
+
+  const signUpWithEmail = async (email: string, password: string, displayName: string) => {
+    try {
+      // Check if Supabase is properly configured
+      if (!supabase) {
+        throw new Error('Please configure Supabase environment variables. See README.md for setup instructions.')
+      }
+
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            display_name: displayName,
+            name: displayName
+          }
+        }
+      })
+
+      if (error) {
+        console.error('Error signing up with email:', error)
+        throw error
+      }
+    } catch (error) {
+      console.error('Error signing up with email:', error)
+      throw error
+    }
+  }
+
+  const resetPassword = async (email: string) => {
+    try {
+      // Check if Supabase is properly configured
+      if (!supabase) {
+        throw new Error('Please configure Supabase environment variables. See README.md for setup instructions.')
+      }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth/reset-password`
+      })
+
+      if (error) {
+        console.error('Error resetting password:', error)
+        throw error
+      }
+    } catch (error) {
+      console.error('Error resetting password:', error)
       throw error
     }
   }
@@ -390,6 +465,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     supabaseUser,
     loading,
     signInWithGoogle,
+    signInWithEmail,
+    signUpWithEmail,
+    resetPassword,
     signOut,
     updateUserProfile
   }

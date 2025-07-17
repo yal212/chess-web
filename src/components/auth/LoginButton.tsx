@@ -1,35 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import Button from '@/components/ui/Button'
-import { LogIn, LogOut, User } from 'lucide-react'
+import { LogIn, UserPlus } from 'lucide-react'
 
 export default function LoginButton() {
-  const { user, signInWithGoogle, signOut, loading } = useAuth()
-  const [isLoading, setIsLoading] = useState(false)
-
-  const handleSignIn = async () => {
-    setIsLoading(true)
-    try {
-      await signInWithGoogle()
-    } catch (error) {
-      console.error('Sign in error:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleSignOut = async () => {
-    setIsLoading(true)
-    try {
-      await signOut()
-    } catch (error) {
-      console.error('Sign out error:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  const { user, loading } = useAuth()
 
   if (loading) {
     return (
@@ -42,15 +19,28 @@ export default function LoginButton() {
   }
 
   return (
-    <Button
-      onClick={handleSignIn}
-      disabled={isLoading}
-      loading={isLoading}
-      variant="gradient"
-      size="md"
-    >
-      {!isLoading && <LogIn className="w-4 h-4 mr-2" />}
-      Sign in with Google
-    </Button>
+    <div className="flex items-center space-x-3">
+      <Link href="/auth/signin">
+        <Button
+          variant="outline"
+          size="md"
+          className="border-2 border-white text-white hover:bg-white hover:text-gray-900 shadow-lg backdrop-blur-sm bg-white/10"
+        >
+          <LogIn className="w-4 h-4 mr-2" />
+          Sign In
+        </Button>
+      </Link>
+
+      <Link href="/auth/signup">
+        <Button
+          variant="gradient"
+          size="md"
+          className="shadow-lg hover:shadow-xl"
+        >
+          <UserPlus className="w-4 h-4 mr-2" />
+          Sign Up
+        </Button>
+      </Link>
+    </div>
   )
 }
