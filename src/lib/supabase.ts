@@ -8,9 +8,15 @@ const isSupabaseConfigured = supabaseUrl && supabaseAnonKey &&
   supabaseUrl !== 'your_supabase_project_url' &&
   supabaseAnonKey !== 'your_supabase_anon_key'
 
-// Client-side Supabase client with optimized real-time configuration
+// Client-side Supabase client with optimized real-time configuration and auth error handling
 export const supabase = isSupabaseConfigured
   ? createBrowserClient(supabaseUrl!, supabaseAnonKey!, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+        flowType: 'pkce'
+      },
       realtime: {
         params: {
           eventsPerSecond: 10,
@@ -19,8 +25,58 @@ export const supabase = isSupabaseConfigured
         reconnectAfterMs: (tries: number) => Math.min(tries * 1000, 30000),
         timeout: 20000,
       },
+      global: {
+        headers: {
+          'X-Client-Info': 'chess-web-app'
+        }
+      }
     })
   : null
+
+// Add global error handler for auth-related fetch failures
+if (typeof window !== 'undefined' && supabase) {
+  // Listen for auth errors globally
+  supabase.auth.onAuthStateChange((event, _session) => {
+    if (event === 'TOKEN_REFRESHED') {
+      console.log('✅ Auth token refreshed successfully')
+    }
+  })
+
+  // Add a global fetch error handler
+  const originalFetch = window.fetch
+  window.fetch = async (...args) => {
+    try {
+      const response = await originalFetch(...args)
+      return response
+    } catch (error) {
+      // Check if this is a Supabase auth-related fetch failure
+      const url = args[0]?.toString() || ''
+      if (url.includes(supabaseUrl!) && url.includes('/auth/v1/')) {
+        console.error('🔴 Supabase auth fetch failed:', {
+          url,
+          error: error instanceof Error ? error.message : error,
+          timestamp: new Date().toISOString()
+        })
+
+        // Dispatch auth error for user notification
+        const { dispatchAuthError } = await import('@/components/AuthErrorHandler')
+        dispatchAuthError({
+          type: 'network',
+          message: 'Connection to authentication server failed. Please check your internet connection.',
+          canRetry: true
+        })
+
+        // Don't throw the error to prevent app crashes
+        // The auth state change handler will handle the session state
+        return new Response(JSON.stringify({ error: 'Network error' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+      throw error
+    }
+  }
+}
 
 // Database types
 export interface User {

@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { User as SupabaseUser } from '@supabase/supabase-js'
 import { supabase, User } from '@/lib/supabase'
+import { dispatchAuthError, dispatchAuthSuccess } from '@/components/AuthErrorHandler'
 
 interface AuthContextType {
   user: User | null
@@ -27,27 +28,64 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return
     }
 
-    // Get initial session
+    // Get initial session with error handling
     const getInitialSession = async () => {
-      const { data: { session } } = await supabase!.auth.getSession()
-      if (session?.user) {
-        setSupabaseUser(session.user)
-        try {
-          await fetchUserProfile(session.user.id)
-        } catch (error) {
-          console.error('Failed to fetch initial user profile, using fallback:', error)
-          createFallbackUser(session.user)
+      try {
+        const { data: { session }, error } = await supabase!.auth.getSession()
+
+        if (error) {
+          console.error('Error getting initial session:', error)
+          dispatchAuthError({
+            type: 'session',
+            message: 'Failed to get authentication session. Please try signing in again.',
+            canRetry: true
+          })
+          setLoading(false)
+          return
         }
+
+        if (session?.user) {
+          setSupabaseUser(session.user)
+          try {
+            await fetchUserProfile(session.user.id)
+          } catch (error) {
+            console.error('Failed to fetch initial user profile, using fallback:', {
+              error,
+              errorType: typeof error,
+              errorConstructor: error?.constructor?.name,
+              errorMessage: (error as any)?.message,
+              errorStack: (error as any)?.stack,
+              errorStringified: JSON.stringify(error),
+              userId: session.user.id
+            })
+            createFallbackUser(session.user)
+          }
+        }
+      } catch (error) {
+        console.error('Unexpected error getting initial session:', error)
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     }
 
     getInitialSession()
 
-    // Listen for auth changes
+    // Listen for auth changes with enhanced error handling
     const { data: { subscription } } = supabase!.auth.onAuthStateChange(
       async (event, session) => {
         console.log('Auth state change:', event, session?.user?.email)
+
+        // Handle specific auth events
+        if (event === 'TOKEN_REFRESHED') {
+          console.log('Token refreshed successfully')
+          dispatchAuthSuccess()
+        } else if (event === 'SIGNED_OUT') {
+          console.log('User signed out')
+          setSupabaseUser(null)
+          setUser(null)
+          setLoading(false)
+          return
+        }
 
         if (session?.user) {
           setSupabaseUser(session.user)
@@ -56,7 +94,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           try {
             await fetchUserProfile(session.user.id)
           } catch (error) {
-            console.error('Failed to fetch user profile, using fallback:', error)
+            console.error('Failed to fetch user profile, using fallback:', {
+              error,
+              errorType: typeof error,
+              errorConstructor: error?.constructor?.name,
+              errorMessage: (error as any)?.message,
+              errorStack: (error as any)?.stack,
+              errorStringified: JSON.stringify(error),
+              userId: session.user.id
+            })
             // Fallback: create user object from auth data
             createFallbackUser(session.user)
           }
@@ -148,7 +194,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await createUserProfile(userId)
       }
     } catch (error) {
-      console.error('Error fetching user profile:', error)
+      console.error('Error fetching user profile:', {
+        error,
+        errorType: typeof error,
+        errorConstructor: error?.constructor?.name,
+        errorMessage: (error as any)?.message,
+        errorStack: (error as any)?.stack,
+        errorStringified: JSON.stringify(error),
+        userId
+      })
       // Don't block auth flow, try to create user profile as fallback
       await createUserProfile(userId)
     }
@@ -232,7 +286,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('User profile created successfully:', data)
       setUser(data)
     } catch (error) {
-      console.error('Error creating user profile:', error)
+      console.error('Error creating user profile:', {
+        error,
+        errorType: typeof error,
+        errorConstructor: error?.constructor?.name,
+        errorMessage: (error as any)?.message,
+        errorStack: (error as any)?.stack,
+        errorStringified: JSON.stringify(error),
+        userId
+      })
 
       // Fallback: use the auth user data to prevent infinite loops
       if (supabaseUser) {
@@ -262,10 +324,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
+      // Get the correct redirect URL based on environment
+      const redirectUrl = process.env.NODE_ENV === 'production'
+        ? 'https://custom-chess-web.vercel.app/auth/callback'
+        : `${window.location.origin}/auth/callback`
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`
+          redirectTo: redirectUrl
         }
       })
       if (error) throw error
