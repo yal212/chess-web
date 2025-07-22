@@ -5,7 +5,6 @@ import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import Navigation from '@/components/layout/Navigation'
 import { testRealtimeSync, testMoveSync, checkRealtimeConfig } from '@/utils/test-realtime-sync'
-import { runRealtimeDiagnostics, quickRealtimeTest } from '@/utils/realtime-diagnostics'
 
 interface TestResult {
   name: string
@@ -69,7 +68,7 @@ export default function TestSyncPage() {
   }
 
   const updateTestResult = (index: number, status: TestResult['status'], message?: string, details?: any) => {
-    setTestResults(prev => prev.map((result, i) => 
+    setTestResults(prev => prev.map((result, i) =>
       i === index ? { ...result, status, message, details } : result
     ))
   }
@@ -185,7 +184,7 @@ export default function TestSyncPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navigation />
-      
+
       <div className="max-w-4xl mx-auto py-8 px-4">
         <div className="mb-8">
           <h1 className="text-3xl font-extrabold text-gray-900 mb-2">
@@ -199,7 +198,7 @@ export default function TestSyncPage() {
         {/* Game Selection */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Select Test Game</h2>
-          
+
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -218,7 +217,7 @@ export default function TestSyncPage() {
                 ))}
               </select>
             </div>
-            
+
             <button
               onClick={createTestGame}
               className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
@@ -231,7 +230,7 @@ export default function TestSyncPage() {
         {/* Test Controls */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Run Tests</h2>
-          
+
           <button
             onClick={runAllTests}
             disabled={isRunningTests}
@@ -244,7 +243,7 @@ export default function TestSyncPage() {
         {/* Test Results */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Test Results</h2>
-          
+
           <div className="space-y-4">
             {testResults.map((result, index) => (
               <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
@@ -257,7 +256,7 @@ export default function TestSyncPage() {
                   }`} />
                   <span className="font-medium text-gray-900">{result.name}</span>
                 </div>
-                
+
                 <div className="text-right">
                   <div className={`text-sm font-medium ${
                     result.status === 'success' ? 'text-green-600' :
