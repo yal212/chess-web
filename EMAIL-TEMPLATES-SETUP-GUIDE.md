@@ -41,7 +41,7 @@ I've created three beautiful, professional email templates that match your Chess
 ## 🚀 How to Apply These Templates
 
 ### Step 1: Access Supabase Email Templates
-1. Go to your [Supabase Dashboard](https://supabase.com/dashboard/project/vudqdubrlkouxjourunl/auth/templates)
+1. Go to your [Supabase Dashboard](https://supabase.com/dashboard/project/YOUR_PROJECT_ID/auth/templates)
 2. Navigate to **Authentication > Email Templates**
 
 ### Step 2: Configure Confirmation Email

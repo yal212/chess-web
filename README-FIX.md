@@ -7,7 +7,7 @@ You're getting a "Database error saving new user" error when signing in with Goo
 
 ### 1. Apply the Database Fix
 
-1. Go to your Supabase dashboard: https://vudqdubrlkouxjourunl.supabase.co
+1. Go to your Supabase dashboard: https://YOUR_PROJECT_ID.supabase.co
 2. Navigate to the SQL Editor
 3. Copy and paste the contents of `fix-user-trigger.sql` into the SQL editor
 4. Run the query

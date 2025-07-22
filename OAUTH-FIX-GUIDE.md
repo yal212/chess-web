@@ -24,7 +24,7 @@ git push origin main
 3. Copy the deployment URL (e.g., `https://chess-web-xyz123.vercel.app`)
 
 ### Step 3: Update Supabase Authentication Settings
-1. Go to [Supabase Auth Settings](https://supabase.com/dashboard/project/vudqdubrlkouxjourunl/auth/url-configuration)
+1. Go to [Supabase Auth Settings](https://supabase.com/dashboard/project/YOUR_PROJECT_ID/auth/url-configuration)
 2. Update these fields:
    - **Site URL**: `https://your-actual-vercel-url.vercel.app`
    - **Redirect URLs**: `https://your-actual-vercel-url.vercel.app/auth/callback`
@@ -34,7 +34,7 @@ git push origin main
 2. Find your OAuth 2.0 Client ID
 3. Update these settings:
    - **Authorized JavaScript origins**: `https://your-actual-vercel-url.vercel.app`
-   - **Authorized redirect URIs**: `https://vudqdubrlkouxjourunl.supabase.co/auth/v1/callback`
+   - **Authorized redirect URIs**: `https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback`
 
 ### Step 5: Test the Fix
 1. Wait 2-3 minutes for changes to propagate
@@ -89,7 +89,7 @@ I've also added comprehensive email authentication! Here's what's new:
 
 ### Email Authentication Configuration:
 1. **Enable Email Auth in Supabase:**
-   - Go to [Supabase Auth Settings](https://supabase.com/dashboard/project/vudqdubrlkouxjourunl/auth/providers)
+   - Go to [Supabase Auth Settings](https://supabase.com/dashboard/project/YOUR_PROJECT_ID/auth/providers)
    - Ensure "Email" provider is enabled
    - Configure email templates if desired
 

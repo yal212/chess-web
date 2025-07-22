@@ -41,8 +41,9 @@ vercel --prod
 ### 2. Environment Variables (Vercel)
 Set these in Vercel dashboard:
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://vudqdubrlkouxjourunl.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIs...
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 ```
 
 ### 3. Domain Configuration
